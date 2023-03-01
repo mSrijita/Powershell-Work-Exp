@@ -1,0 +1,431 @@
+#==========================================================================
+# AUTHOR: Srijita Mondal, Deere & Company
+# DATE: 6/01/2022
+#==========================================================================
+
+#Enables the powershell common parameters and sets defaults http://technet.microsoft.com/en-us/library/hh847872.aspx
+[CmdletBinding()]
+
+#Script parameters http://technet.microsoft.com/en-us/library/hh847743.aspx
+param(
+    [ValidateSet('Install', 'Uninstall')]
+    [Alias('Action')]
+    [String] $Param = 'Install',
+
+    [Alias('Silent', 'S')]
+    [Switch] $global:IsSilent,
+
+    [Switch] $Test
+)
+
+#Sets the default XAML Window State of the Splash Screen https://msdn.microsoft.com/en-us/library/system.windows.windowstate(v=vs.110).aspx
+$global:WindowState = 'Normal'
+
+if ($Test -eq $false) {
+    #Sets the main PowerShell console window visibility to hidden
+    Add-Type -Name win -Member '[DllImport("user32.dll")] public static extern bool ShowWindow(int handle, int state);' -Namespace native
+    $consoleHandle = ([System.Diagnostics.Process]::GetCurrentProcess() | Get-Process).MainWindowHandle
+    [native.win]::ShowWindow($consoleHandle, 0) | Out-Null
+}
+
+#Enforces best practices http://technet.microsoft.com/en-us/library/hh849692.aspx
+Set-StrictMode -Version '2.0'
+
+#Continues on error. http://technet.microsoft.com/en-us/library/hh847796.aspx
+$script:ErrorActionPreference = 'Continue' 
+    
+#Turns off confirmation prompt http://technet.microsoft.com/en-us/library/hh847796.aspx
+$ConfirmPreference = 'None'
+
+#Stores all of the machine & run time environment properties
+$global:EnvironmentProperties = @{
+    ComputerName = $env:computername
+    CurrentDirectory = ($MyInvocation.MyCommand.Path | Split-Path)
+    OSArchitecture = (Get-ItemProperty 'hklm:\system\currentcontrolset\control\session manager\Environment\' | select Processor_Architecture).Processor_Architecture
+    OSVersion = [version](Get-WmiObject Win32_OperatingSystem).Version
+    PendingReboot = (New-Object -COM Microsoft.Update.SystemInfo).RebootRequired
+    PowerShellVersion = [version]($PSVersionTable.PSVersion)
+    CLRVersion = [version]($PSVersionTable.CLRVersion)
+    PreferredDisplayLanguage = 'English'
+    ProgramFiles = ([System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles))
+    SystemDrive = $env:SystemDrive
+    TempDirectory = $env:temp
+    ProgramData = $env:ProgramData
+    UserId = $null
+    UserProfileSid = $null
+    MsiExec = "$env:windir\system32\msiexec.exe"
+}
+
+#Stores values referenced by the script during runtime
+$global:ScriptProperties = @{
+    AcceptableExitCodes = @(-1, 0, 3010)
+    ApplicationName = 'SQuirreL SQL Client'
+    ApplicationVersion = '4.2.0'
+    ExitCode = -1
+    MinimumPowerShellVersion = [version]'3.0'
+    MinimumCLRVersion = [version]'4.0'
+    PreviousVersionsDetected = $false
+    SplashScreen = $null
+    SplashTitle = 'Installing'
+    UnsupportedOSVersions = @([version]'0.0')
+    Is64BitOnly = $false
+    AdminRequired = $false
+    Version = [version]'1.0'
+}
+
+
+$global:JavaUninstallProperties = @(
+    @{
+        DisplayName = "Java 8 Update 151"
+        DisplayVersion = '8.0.1510.12'        
+        UninstallKey = '{26A24AE4-039D-4CA4-87B4-2F32180151F0}'
+        UninstallPath = $($EnvironmentProperties.MsiExec)
+        UninstallArguments = @('/X', '{26A24AE4-039D-4CA4-87B4-2F32180151F0}','REBOOT=ReallySuppress','/QN',"/l*v $($EnvironmentProperties.TempDirectory)\Java_RE_8.0.1510.12_Uninstall.log")
+    }
+    @{
+        DisplayName = "Java 8 Update 151 (64-bit)"
+        DisplayVersion = '8.0.1510.12'        
+        UninstallKey = '{26A24AE4-039D-4CA4-87B4-2F64180151F0}'
+        UninstallPath = $($EnvironmentProperties.MsiExec)
+        UninstallArguments = @('/X', '{26A24AE4-039D-4CA4-87B4-2F64180151F0}','REBOOT=ReallySuppress','/QN',"/l*v $($EnvironmentProperties.TempDirectory)\Java_RE_8.0.1510.12_Uninstall.log")
+    }
+    @{
+        DisplayName = 'Java 8 Update 201 (64-bit)'
+        DisplayVersion = '8.0.2010.9'        
+        UninstallKey = '{26A24AE4-039D-4CA4-87B4-2F64180201F0}'
+        UninstallPath = "$($EnvironmentProperties.MsiExec)"
+        UninstallArguments = @('/X', '{26A24AE4-039D-4CA4-87B4-2F64180201F0}','REBOOT=ReallySuppress','/QN',"/l*v $($EnvironmentProperties.TempDirectory)\Java_RE_8.0.2010.9_Uninstall.log")        
+    }
+    @{
+        DisplayName = 'Java 8 Update 201'
+        DisplayVersion = '8.0.2010.9'        
+        UninstallKey = '{26A24AE4-039D-4CA4-87B4-2F32180201F0}'
+        UninstallPath = "$($EnvironmentProperties.MsiExec)"
+        UninstallArguments = @('/X', '{26A24AE4-039D-4CA4-87B4-2F32180201F0}','REBOOT=ReallySuppress','/QN',"/l*v $($EnvironmentProperties.TempDirectory)\Java_RE_8.0.2010.9_Uninstall.log")        
+    }
+)
+
+#Entry Point
+function Start-Main {
+    #Import all files in the modules directory
+    $Modules = Get-Childitem "$($EnvironmentProperties.CurrentDirectory)\Modules" -recurse | ForEach-Object {
+        Import-Module $_.FullName -Force
+    }
+
+    #Creates the log file and logs the environment properties
+    Initialize-LogFile
+
+    #Sets values for any necessary global variables
+    Initialize-GlobalVariables
+
+    #Tests environment to ensure it is compatibile with the software
+    Test-EnvironmentCompatibility
+
+    #Getting command-line arguments
+    Get-Arguments
+
+    #Exiting Script.
+    Stop-Script
+}
+
+#Evaluates the arguments that were passed to the script on the command line
+function Get-Arguments {
+    Write-Log 'Checking for Arguments' -Header
+
+    if ($Param -eq 'Install') {
+        Write-Log 'Found Install on the command line.  Running Installer.'
+        Set-ScriptVisibility
+        Write-Log 'Finished checking for arguments' -Footer
+        
+        Remove-Squirrel
+        Invoke-JavaUninstall
+        Remove-JunkFileFolder
+        Invoke-Install
+    }
+
+    if ($Param -eq 'Uninstall') {
+        Write-Log 'Found Uninstall on the command line.  Running Uninstaller.'
+        Write-Log 'Finished checking for arguments' -Footer
+
+        Invoke-Uninstall
+    }    
+}
+
+function Invoke-JavaUninstall {
+    
+    $JavaUninstallProperties | ForEach-Object {
+        if ((Test-SoftwareInstalled -DisplayName $_.DisplayName -UninstallKey $_.UninstallKey)) {
+            
+            Write-Log "Java is installed with version $($_.UninstallKey)...uninstalling"
+            Write-Log "Uninstalling with command: $($_.UninstallPath) $($_.UninstallArguments)"
+            Write-Verbose "(Start-Process -FilePath $($_.UninstallPath) -ArgumentList $($_.UninstallArguments) -Wait -PassThru -WindowStyle Hidden).ExitCode"
+        
+            $ScriptProperties.ExitCode = (Start-Process -FilePath $_.UninstallPath -ArgumentList $_.UninstallArguments -Wait -PassThru -WindowStyle Hidden).ExitCode            
+            
+            Write-Log "Uninstall exited with code: $($ScriptProperties.ExitCode)"
+        }
+    }
+}
+
+#Installs the software
+function Invoke-Install {
+    Write-Log 'Starting Install' -Header
+
+    Write-Log "Installing OpenJDK 11.0.2..."
+
+    
+    $Src_imgs = "$($EnvironmentProperties.CurrentDirectory)\Media\openjdk-11.0.2_windows-x64_bin\*"
+    $java_installdir = "$env:ProgramFiles\Java"
+
+   try {
+        if(!(Test-Path $java_installdir)) {
+            New-Item -Path $java_installdir -ItemType Directory -Force
+        }
+        Copy-Item -Path $Src_imgs -Destination $java_installdir -Force -Recurse -ea SilentlyContinue
+        Write-Log "Copied files to location $java_installdir..."
+        #$ScriptProperties.ExitCode = 0
+    }
+    Catch {
+        Write-Log "Copy is not successfull..."
+    }
+
+    #Write-Log "Open JDK 11.0.2 installation completed..."
+
+
+
+        $reg_env = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment"        
+        
+        #set JAVA_HOME environment variable
+        if(((Get-Item -Path $reg_env).GetValue("JAVA_HOME")) -eq $null){
+            Write-Log "Creating & Setting JAVA_HOME environment variable as $env:ProgramFiles\Java\jdk-11.0.2"
+            New-ItemProperty -Path $reg_env -Name "JAVA_HOME" -Value "$env:ProgramFiles\Java\jdk-11.0.2" -ea SilentlyContinue            
+            Write-Log "Setting JAVA_HOME environment variable as $reg_new_val "            
+        }
+        else{
+            $reg_new_val = (Get-Item -Path $reg_env).GetValue("JAVA_HOME") + ";$env:ProgramFiles\Java\jdk-11.0.2"
+            Write-Log "Setting JAVA_HOME environment variable as $reg_new_val "
+            Set-ItemProperty -Path $reg_env -Name "JAVA_HOME" -Value $reg_new_val -ea SilentlyContinue
+        }
+    
+        
+        #Modify Path Environment Variable
+
+        if(((Get-Item -Path $reg_env).GetValue("Path")) -eq $null){
+            Write-Log "Creating & Setting Path environment variable as $env:ProgramFiles\Java\jdk-11.0.2\bin"
+            New-ItemProperty -Path $reg_env -Name "Path" -Value "$env:ProgramFiles\Java\jdk-11.0.2\bin" -ea SilentlyContinue
+        }
+        else{
+            $reg_new_val = (Get-Item -Path $reg_env).GetValue("Path") + ";$env:ProgramFiles\Java\jdk-11.0.2\bin"
+            Write-Log "Setting Path environment variable as $reg_new_val "
+            Set-ItemProperty -Path $reg_env -Name "Path" -Value $reg_new_val -ea SilentlyContinue
+        }
+    
+
+    $inst = "C:\Program Files\Java\jdk-11.0.2\bin\java.exe"
+    $arg = "-jar $($EnvironmentProperties.CurrentDirectory)\Media\squirrel-sql-4.2.0-standard.jar $($EnvironmentProperties.CurrentDirectory)\Media\Silent.xml"
+    $ScriptProperties.ExitCode = (Start-Process -FilePath $inst -ArgumentList $arg -Wait -PassThru -WindowStyle Hidden).ExitCode
+
+
+    #Setup the drivers
+    New-Item -ItemType Directory -Path "C:\Program Files\squirrel-sql-4.2.0\driver" -Force | Out-Null
+    Copy-Item "$($EnvironmentProperties.CurrentDirectory)\media\drivers\*" "C:\Program Files\squirrel-sql-4.2.0\driver" -Force | Out-Null  
+    Copy-Item "$($EnvironmentProperties.CurrentDirectory)\media\javaw.exe" "C:\Program Files\squirrel-sql-4.2.0\javaw.exe" -Force -ea SilentlyContinue
+
+    #Copying javaw.exe to Squirrel install path
+    if(!(Test-Path "C:\Program Files\squirrel-sql-4.2.0\javaw.exe")){
+        Copy-Item "$($EnvironmentProperties.CurrentDirectory)\Media\javaw.exe" "C:\Program Files\squirrel-sql-4.2.0\javaw.exe" -Force -ea SilentlyContinue
+    }
+
+    #Creating desktop shortcut
+    $Source = "C:\Program Files\squirrel-sql-4.2.0"
+    New-Shortcut -Link "$($EnvironmentProperties.SystemDrive)\Users\Public\Desktop\SQuirreL SQL Client 4.2.0.lnk" -TargetPath "$Source\squirrel-sql.bat"  -Icon "$Source\icons\acorn.ico" -Working $Source
+
+    #Creating Start Menu Shortcut
+    if (!(Test-Path -Path "$($EnvironmentProperties.ProgramData)\Microsoft\Windows\Start Menu\Programs\SQuirreL SQL Client 4.2.0")){
+        New-Item -ItemType Directory -Path "$($EnvironmentProperties.ProgramData)\Microsoft\Windows\Start Menu\Programs\SQuirreL SQL Client 4.2.0" -Force | Out-Null
+    }
+    New-Shortcut -Link "$($EnvironmentProperties.SystemDrive)\ProgramData\Microsoft\Windows\Start Menu\Programs\SQuirreL SQL Client 4.2.0\SQuirreL SQL Client 4.2.0.lnk" -TargetPath "$Source\squirrel-sql.bat"  -Icon "$Source\icons\acorn.ico" -Working $Source
+    Copy-Item -Path "$($EnvironmentProperties.CurrentDirectory)\media\Steps for Alias Creation.docx" "$($EnvironmentProperties.ProgramData)\Microsoft\Windows\Start Menu\Programs\SQuirreL SQL Client 4.2.0" -Force | Out-Null
+    
+
+
+    #Replacing batch file to Squirrel install path
+    if(Test-Path "C:\Program Files\squirrel-sql-4.2.0\squirrel-sql.bat"){
+       Remove-Item "C:\Program Files\squirrel-sql-4.2.0\squirrel-sql.bat"
+       Copy-Item "$($EnvironmentProperties.CurrentDirectory)\Media\squirrel-sql.bat" "C:\Program Files\squirrel-sql-4.2.0\squirrel-sql.bat" -Force -ea SilentlyContinue
+    }
+
+    $BIOS_Ver = Get-WmiObject -Class Win32_BIOS | select-object -ExpandProperty SMBIOSBIOSVersion
+
+    if($BIOS_Ver.Contains("amazon")){
+        Write-Log "This is Amazon Workspace..."
+        
+        Set-Location "D:"
+        $user_dir = Get-ChildItem "D:\Users"
+    
+        foreach($dir in $user_dir){
+            if(!(test-path -Path "D:\Users\$dir\.squirrel-sql")){
+                New-Item "D:\Users\$dir\.squirrel-sql" -ItemType directory -ErrorAction SilentlyContinue
+            }
+            Copy-Item "$($EnvironmentProperties.CurrentDirectory)\Media\SQLDrivers.xml" "D:\Users\$dir\.squirrel-sql" -Force -ErrorAction SilentlyContinue
+            Copy-Item "$($EnvironmentProperties.CurrentDirectory)\Media\SQLAliases23.xml" "D:\Users\$dir\.squirrel-sql" -Force -ErrorAction SilentlyContinue
+        }
+    
+        Set-Location "$env:SystemDrive"
+    }
+    else{
+        
+        Write-Log "This is not Amazon Workspace..."
+        
+        $user_dir = Get-ChildItem "$env:SystemDrive\Users" | Select-Object -ExpandProperty Name
+
+        foreach($dir in $user_dir){
+            if(!(test-path -Path "$env:SystemDrive\Users\$dir\.squirrel-sql")){
+                New-Item "$env:SystemDrive\Users\$dir\.squirrel-sql" -ItemType directory -ErrorAction SilentlyContinue
+            }
+            Copy-Item "$($EnvironmentProperties.CurrentDirectory)\Media\SQLDrivers.xml" "$env:SystemDrive\Users\$dir\.squirrel-sql" -Force -ErrorAction SilentlyContinue
+            Copy-Item "$($EnvironmentProperties.CurrentDirectory)\Media\SQLAliases23.xml" "$env:SystemDrive\Users\$dir\.squirrel-sql" -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+
+    #ARP Entry Setting.
+
+    $regPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\SQuirreL SQL Client 4"
+    if(-not (Test-Path $regPath)) {
+        New-Item -Path $regPath -Force -ItemType "Directory" | Out-Null
+    }
+
+    New-ItemProperty -Path $regPath -Name "DisplayName" -PropertyType "String" -Value "SQuirreL SQL Client" -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "UninstallString" -PropertyType "String" -Value "null" -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "DisplayIcon" -PropertyType "String" -Value "$env:ProgramFiles\squirrel-sql-4.2.0\icons\acorn.ico" -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "NoRemove" -PropertyType "DWORD" -Value 1 -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "NoModify" -PropertyType "DWORD" -Value 1 -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "NoRepair" -PropertyType "DWORD" -Value 1 -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "Publisher" -PropertyType "String" -Value 'Oracle Corporation' -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "Displayversion" -PropertyType "String" -Value "4.2.0" -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "VersionMajor" -PropertyType "DWORD" -Value 3 -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "VersionMinor" -PropertyType "DWORD" -Value 8 -Force | Out-Null
+
+    Write-Log 'Install Completed' -Footer
+}
+
+#Removal of squirrel-sql previous version
+function Remove-Squirrel {
+    Write-Log 'Starting Uninstall' -Header
+
+    $inst = "$env:ProgramFiles\squirrel-sql-3.8.1\Uninstaller\uninstaller.jar"
+    $arg = "java -jar $inst -c -f"
+    $ScriptProperties.ExitCode = (Start-Process -FilePath $inst -ArgumentList $arg -Wait -PassThru -WindowStyle Hidden).ExitCode
+
+    $BIOS_Ver = Get-WmiObject -Class Win32_BIOS | select-object -ExpandProperty SMBIOSBIOSVersion
+
+    if($BIOS_Ver.Contains("amazon")){
+        Write-Log "This is Amazon Workspace..."
+     
+        Set-Location "D:"
+        
+        $user_dir = Get-ChildItem "D:\Users"
+    
+        foreach($dir in $user_dir){
+            if(test-path -Path "D:\Users\$dir\.squirrel-sql"){
+                Remove-Item "D:\Users\$dir\.squirrel-sql" -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    
+        if(Test-Path -Path "D:\Users\Public\Desktop\SQuirreL SQL Client 3.8.1.lnk"){
+            Remove-Item "D:\Users\Public\Desktop\SQuirreL SQL Client 3.8.1.lnk"
+        }
+    
+        Set-Location "$env:SystemDrive"
+    }
+
+    if(Test-Path -Path "$($EnvironmentProperties.ProgramData)\Microsoft\Windows\Start Menu\Programs\SQuirreL SQL Client 3.8.1") {
+        Remove-Item -Path "$($EnvironmentProperties.ProgramData)\Microsoft\Windows\Start Menu\Programs\SQuirreL SQL Client 3.8.1\Steps for Alias Creation.docx" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$($EnvironmentProperties.SystemDrive)\ProgramData\Microsoft\Windows\Start Menu\Programs\SQuirreL SQL Client 3.8.1\SQuirreL SQL Client 3.8.1.lnk" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$($EnvironmentProperties.SystemDrive)\ProgramData\Microsoft\Windows\Start Menu\Programs\SQuirreL SQL Client 3.8.1" -Force -Recurse -ErrorAction SilentlyContinue  
+        Remove-Item -Path "$($EnvironmentProperties.SystemDrive)\ProgramData\Microsoft\Windows\Start Menu\Programs\SQuirreL SQL Client 3.8.1.lnk" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    
+    $regPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\SQuirreL SQL Client 3.8.1"
+    $regPath64 = "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\SQuirreL SQL Client 3.8.1"
+    
+    Remove-Item -path "$($EnvironmentProperties.SystemDrive)\Users\Public\Desktop\SQuirreL SQL Client 3.8.1.lnk" -Recurse -Force -ErrorAction SilentlyContinue
+
+    Remove-Item $regPath -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item $regPath64 -Recurse -Force -ErrorAction SilentlyContinue
+    
+    Write-Log 'Uninstall Completed' -Footer
+}
+
+function Remove-JunkFileFolder {
+
+    Write-Log 'Removing junk folders,registries' -Header
+
+    Remove-Item "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\SQuirreL SQL Client 4.2.0" -Recurse -Force -ErrorAction SilentlyContinue
+    if(Test-Path -Path "$($EnvironmentProperties.ProgramData)\Microsoft\Windows\Start Menu\Programs\SQuirreL SQL Client 4.2.0") {
+        Remove-Item -Path "$($EnvironmentProperties.ProgramData)\Microsoft\Windows\Start Menu\Programs\SQuirreL SQL Client 4.2.0" -Force -Recurse -ErrorAction SilentlyContinue        
+    }
+   # if(Test-Path -Path "$env:ProgramFiles\Java"){
+   #     Remove-Item -Path "$env:ProgramFiles\Java" -Force -Recurse -ErrorAction SilentlyContinue
+   # }
+     if(Test-Path -Path "C:\Program Files\squirrel-sql-4.2.0"){
+        Remove-Item -Path "C:\Program Files\squirrel-sql-4.2.0" -Force -Recurse -ErrorAction SilentlyContinue
+    }
+
+    Write-Log 'Removal Completed' -Footer
+
+}
+
+#Uninstalls the software if an installation is detected
+function Invoke-Uninstall {
+    Write-Log 'Starting Uninstall' -Header
+
+    
+    $inst = "C:\Program Files\Java\jdk-11.0.2\bin\java.exe"
+    $arg = "$inst -jar `"C:\Program Files\squirrel-sql-4.2.0\Uninstaller\uninstaller.jar`" -c -f"
+    
+    $ScriptProperties.ExitCode = (Start-Process -FilePath $inst -ArgumentList $arg -Wait -PassThru -WindowStyle Hidden).ExitCode
+
+    $BIOS_Ver = Get-WmiObject -Class Win32_BIOS | select-object -ExpandProperty SMBIOSBIOSVersion
+
+    if($BIOS_Ver.Contains("amazon")){
+        Write-Log "This is Amazon Workspace..."
+     
+        Set-Location "D:"
+        
+        $user_dir = Get-ChildItem "D:\Users"
+    
+        foreach($dir in $user_dir){
+            if(test-path -Path "D:\Users\$dir\.squirrel-sql"){
+                Remove-Item "D:\Users\$dir\.squirrel-sql" -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    
+        if(Test-Path -Path "D:\Users\Public\Desktop\SQuirreL SQL Client 4.2.0.lnk"){
+            Remove-Item "D:\Users\Public\Desktop\SQuirreL SQL Client 4.2.0.lnk"
+        }
+    
+        Set-Location "$env:SystemDrive"
+    }
+
+    Remove-Item -path "$($EnvironmentProperties.SystemDrive)\Users\Public\Desktop\SQuirreL SQL Client 4.2.0.lnk" -Recurse -Force -ErrorAction SilentlyContinue
+    
+    Remove-Item "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\SQuirreL SQL Client 4" -Recurse -Force -ErrorAction SilentlyContinue
+   
+    
+    if(Test-Path -Path "$($EnvironmentProperties.ProgramData)\Microsoft\Windows\Start Menu\Programs\SQuirreL SQL Client 4.2.0") {
+        Remove-Item -Path "$($EnvironmentProperties.ProgramData)\Microsoft\Windows\Start Menu\Programs\SQuirreL SQL Client 4.2.0" -Force -Recurse -ErrorAction SilentlyContinue        
+    }
+   
+   
+    if(Test-Path -Path "C:\Program Files\squirrel-sql-4.2.0"){
+        Remove-Item -Path "C:\Program Files\squirrel-sql-4.2.0" -Force -Recurse -ErrorAction SilentlyContinue
+    }
+    $ScriptProperties.ExitCode = 0
+    Write-Log 'Uninstall Completed' -Footer
+}
+
+
+#Starts the main entry point for the script
+Start-Main
