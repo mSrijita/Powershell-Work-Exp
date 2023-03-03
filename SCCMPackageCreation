@@ -1,0 +1,296 @@
+#       Description: SCCM Application Creation Script                                        
+
+$Application =''
+$AppExists = 0
+
+Import-Module (Join-Path $(Split-Path $env:SMS_ADMIN_UI_PATH) ConfigurationManager.psd1) 
+
+$SiteCode = Get-PSDrive -PSProvider CMSITE
+$SiteCode = $SiteCode.Name
+$SiteCode = 'C01:'
+Set-Location C01: # Set the current location to be the site code.
+
+
+#####Functions for Logging #####
+Function WriteLogs
+{
+    [cmdletbinding()]
+    Param(
+        [Parameter(Mandatory=$true,Position=1)]
+        [string]$LogText,
+        
+        [Parameter(Mandatory=$true,Position=2)]
+        [string]$FilePath
+    )
+
+if(!(Test-Path -Path "$PSScriptRoot\Logs" )){New-Item -ItemType directory -Path "$PSScriptRoot\Logs"}
+
+Write-Output "$(Get-Date -Format "MM/dd/yyyy HH:mm:ss"): $LogText"
+$(Get-Date -Format "MM/dd/yyyy HH:MM:ss") + ": $LogText" | Out-File "$PSScriptRoot\Logs\$FilePath" -Append
+
+}
+
+######################## Application Variable ####################################
+
+### Fetching the User ID
+$UserID = $env:UserName
+$CurrUserName = (Get-ADUser $env:USERNAME -properties *).Name
+$InputData = Import-Csv "$($PSScriptRoot)\AppList.csv"
+$ReportFileName = 'SCCMApplicationCreation_'+$(get-Date -UFormat "%m-%d-%Y_%H-%M-%S").ToString()+'.csv'
+$Global:Report_CSV = "$($PSScriptRoot)\Report\$($ReportFileName)"
+
+if(!(Test-Path $Report_CSV)){
+            New-Item -Path $Report_CSV -ItemType File -Force
+}
+
+"SCCMAppName,AppCreationStatus" | Add-Content -Path $Report_CSV -Force
+
+ForEach ($row in $InputData){
+
+$APPManufacturer = "$($row.Manufacturer)"
+$APPName = "$($row.ApplicationName)"
+$APPVersion = "$($row.Version)"
+$AppRevision = "$($row.RevisionNo)"
+$APPSourcePath = "$($row.PkgSourcePath)"
+$Mode = "Admin-Visible-Noreboot"
+$InstallType = "$($row.Type)"
+$CMSNo = "$($row.CMSNo)"
+$JDSRSCatalogLink = "$($row.JDSRSCatalogLink)"
+$MaxRunTime = "$($row.MaxRunTimeinminutes)"
+$Linktotext = "Link to Access JDSRS Catalog"
+$DetectionSubPath = -join($APPManufacturer, "_" ,$APPName, "_" ,$APPVersion, "_" ,$AppRevision)
+$DetectionRegpath = "SOFTWARE\DeereKeys\InstalledApps\$DetectionSubPath"
+$DetectionRegValName = "Returncode"
+$DetectionRegValue = 0
+
+$SCCMAPPName = "$($APPName) $($APPVersion)"
+
+WriteLogs "############################################" "$SCCMAPPName`.log"
+WriteLogs "Processing - $($row.ApplicationName)" "$SCCMAPPName`.log"
+WriteLogs "............Script is initiated - $UserID - $CurrUserName" "$SCCMAPPName`.log"
+WriteLogs "Reading ... $PSScriptRoot\AppList.csv" "$SCCMAPPName`.log"
+
+
+IF (([string]::IsNullOrEmpty($CMSNo))){
+    WriteLogs "CMS Request Number Not Entered. Exiting Script" "$SCCMAPPName`.log"
+    "$CMSNo,CMS Request Number Must be Entered" | Add-Content -Path $Report_CSV -Force
+    Continue    
+}
+
+IF (([string]::IsNullOrEmpty($APPName))){
+    WriteLogs "Application Name Not Entered. Exiting Script"
+    "$SCCMAPPName,Application Name Must be Entered" | Add-Content -Path $Report_CSV -Force
+    Continue    
+}
+
+IF (([string]::IsNullOrEmpty($APPVersion))){
+    WriteLogs "Application version Not Entered. Exiting Script"
+    "$APPVersion,Application Version Must be Entered" | Add-Content -Path $Report_CSV -Force
+    Continue    
+}
+
+IF (([string]::IsNullOrEmpty($APPManufacturer))){
+    WriteLogs "Application Manufacturer Not Entered. Exiting Script"
+    "$APPManufacturer,Application Manufacturer Must be Entered" | Add-Content -Path $Report_CSV -Force
+    Continue    
+}
+
+IF (([string]::IsNullOrEmpty($AppRevision))){
+    WriteLogs "Application Revision Number Not Entered. Exiting Script"
+    "$AppRevision,Application Revision Number Must be Entered" | Add-Content -Path $Report_CSV -Force
+    Continue    
+}
+
+IF (([string]::IsNullOrEmpty($MaxRunTime)) -or ($MaxRunTime -lt 120)){
+    $MaxRunTime = 120
+}
+
+
+$APPDesc = " Created by SCCM App Creation Automation Script. CMSReq# " + $row.CMSNo + ". Created by - $UserID --"
+
+$DistributionType = "Test Distribution"
+$FolderPath = "$SiteCode\Application\Test Distribution\EDS Test Packages"
+$InsProgramName = "$APPName" + "_$APPVersion - Install (Test)"
+if($InstallType -match "Script"){$InsSilentProgramName = "$APPName" + "_$APPVersion - Silent (Test)"}
+$UnInsProgramName = "$APPName" + "_$APPVersion - Uninstall (Test)"
+
+
+$Source = @{Name = "Source"}
+$Source.Path = $APPSourcePath
+
+
+cd c: #THIS IS THE CRITICAL LINE
+$ScriptFileName = Get-ChildItem $Source.Path -Filter *.ps1
+
+If(!($ScriptFileName.Count -eq 1)) { 
+WriteLogs "No Script File exist / Mulitiple Scrip file Exist" "$SCCMAPPName`.log"
+WriteLogs "SKIPPING....." "$SCCMAPPName`.log"
+"$SCCMAPPName,MoreThanOnePSfileFound/NoPSFileFound" | Add-Content -Path $Report_CSV -Force
+Continue}
+
+Set-Location C01:
+$AppExists = 0
+if ((Get-CMApplication -Name $SCCMAPPName).LocalizedDisplayName -eq $SCCMAPPName){$AppExists = 1}
+
+cd c: #THIS IS THE CRITICAL LINE
+
+if ($AppExists -eq 1){
+WriteLogs "An SCCM Application with same name already present"  "$SCCMAPPName`.log"
+"$SCCMAPPName,An SCCM Application with same name already present" | Add-Content -Path $Report_CSV -Force
+Continue
+}
+
+
+
+$InsCommandLine = "%windir%\system32\WindowsPowerShell\v1.0\powershell.exe -windowstyle hidden -ExecutionPolicy ByPass -file $ScriptFileName -Action Install"
+$InsSilentCommandLine = "%windir%\system32\WindowsPowerShell\v1.0\powershell.exe -windowstyle hidden -ExecutionPolicy ByPass -file $ScriptFileName -Action Install -Silent"
+$UninstCommandLine = "%windir%\system32\WindowsPowerShell\v1.0\powershell.exe -windowstyle hidden -ExecutionPolicy ByPass -file $ScriptFileName -Action Uninstall"
+
+
+$Type = $APPSourcePath.Split("\")
+
+
+if($type[3]) {
+if ($Type[3].ToLower() -eq "smsscripts") {
+$DistributionType = "Standard Distribution"
+$FolderPath = "$SiteCode\Application\Standard Distribution\EDSCRIPT"
+$InsProgramName = "$APPName" + "_$APPVersion - Install"
+$InsSilentProgramName = "$APPName" + "_$APPVersion - Silent"
+$UnInsProgramName = "$APPName" + "_$APPVersion - Uninstall"}
+    
+if ($Type[3].ToLower() -eq "jdsetup") {
+$DistributionType = "Limited Distribution"
+$FolderPath = "$SiteCode\Application\Limited Distribution\JDSETUP"
+$InsProgramName = "$APPName" + "_$APPVersion - Install"
+$UnInsProgramName = "$APPName" + "_$APPVersion - Uninstall"}
+}
+
+$DeployApp = $False
+if ($Type[3].ToLower() -eq "psdscripts") {
+$DeployApp = $True
+}
+
+######################## Program Variable ####################################
+
+####### Initializing Variable ######
+
+[bool]$SuppressProgramNotification = $False
+$RunType = "Minimized"
+[Bool]$UserInteraction = $True
+$ProgramRunType = "OnlyWhenUserIsLoggedOn"
+$RunMode = "RunWithUserRights"
+$AfterRunningType = "NoActionRequired"
+$Mode = $Mode.Split("-")
+
+####### Validating with Input Option ######
+
+If ($Mode[0] -match "Admin") {
+$InstallBehaviour = "InstallForSystem"}
+
+If ($Mode[1] -match " Hidden") {$InstallationProgramVisibility = "Hidden"
+[Bool]$UserInteraction = $False
+$loginRequirementType = "WhetherOrNotUserLoggedOn"
+[bool]$SuppressProgramNotification = $True}
+If (!($Mode[2] -match " No Reboot")){$rebootbehaviour = "BasedOnExitCode"}
+
+
+Write-Output $Mode
+Write-Output [bool]$SuppressProgramNotification $RunType [Bool]$UserInteraction $ProgramRunType $RunMode $AfterRunningType
+
+
+########################
+
+
+WriteLogs "Manufacturer: $APPManufacturer" "$SCCMAPPName`.log" 
+WriteLogs "Application Name: $SCCMAPPName" "$SCCMAPPName`.log" 
+WriteLogs "Version: $APPVersion" "$SCCMAPPName`.log" 
+WriteLogs "Description: $APPDesc" "$SCCMAPPName`.log" 
+WriteLogs "RevisionNo: $AppRevision" "$SCCMAPPName`.log" 
+WriteLogs "DetectionRegPath: $DetectionRegpath" "$SCCMAPPName`.log" 
+WriteLogs "DetectionKeyName: $DetectionRegValName" "$SCCMAPPName`.log"
+WriteLogs "DetectionKeyValue: $DetectionRegValue" "$SCCMAPPName`.log"
+WriteLogs "CMSReqNo: $CMSNo" "$SCCMAPPName`.log"
+WriteLogs "JDSRS Catalog URL: $JDSRSCatalogLink" "$SCCMAPPName`.log"
+WriteLogs "SourcePath: $APPSourcePath" "$SCCMAPPName`.log"
+WriteLogs "Distribution Type: $DistributionType" "$SCCMAPPName`.log" 
+WriteLogs "Application Location: $FolderPath" "$SCCMAPPName`.log" 
+WriteLogs "Install Program Name: $InsProgramName : $InsCommandLine" "$SCCMAPPName`.log"
+if($InstallType -match "Script"){WriteLogs "Silent Install Program Name: $InsSilentProgramName : $InsSilentCommandLine" "$SCCMAPPName`.log"}
+WriteLogs "Install Program Options: $Mode" "$SCCMAPPName`.log" 
+WriteLogs "Uninstall Program Name: $UnInsProgramName : $UninstCommandLine" "$SCCMAPPName`.log" 
+ 
+
+Set-Location C01:
+
+##############################################################################
+
+WriteLogs "PROCESS - Creating Application......... $SCCMAPPName" "$SCCMAPPName`.log" 
+
+$Application = New-CMApplication -Name $SCCMAPPName -Description $APPDesc -SoftwareVersion $APPVersion -Publisher $APPManufacturer
+$AppDeploymentType = Add-CMScriptDeploymentType -ApplicationName $Application.LocalizedDisplayName -ContentLocation $APPSourcePath -InstallationBehaviorType InstallForSystem -DeploymentTypeName $SCCMAPPName -InstallCommand $InsCommandLine -UninstallCommand $UninstCommandLine -RebootBehavior BasedOnExitCode -LogonRequirementType WhereOrNotUserLoggedOn -InstallationProgramVisibility Hidden -ScriptLanguage PowerShell -ScriptText test -RequireUserInteraction -SlowNetworkDeploymentMode Download -MaximumRuntimeMins $MaxRunTime -UninstallOption SameAsInstall  
+
+
+If ([string]::IsNullOrEmpty($Application.LocalizedDisplayName)) { 
+        WriteLogs "ERROR - Invalid Application or Specified Application may already exist: $SCCMAPPName" "$SCCMAPPName`.log" 
+        "$SCCMAPPName,Invalid Application" | Add-Content -Path $Report_CSV -Force
+        Continue}
+WriteLogs "SUCCESSS - Application -- $SCCMAPPName -- has been created successfully" "$SCCMAPPName`.log"
+"$($Application.LocalizedDisplayName),Success" | Add-Content -Path $Report_CSV -Force 
+$APPID = $Application.PackageID
+
+WriteLogs "PROCESS - Adding Detection Logic to Deployment Type Name = $SCCMAPPName" "$SCCMAPPName`.log" 
+Try {
+    $DetectionClause = New-CMDetectionClauseRegistryKeyValue -Hive LocalMachine -KeyName $DetectionRegpath -PropertyType Integer -ValueName $DetectionRegValName -Value -ExpectedValue $DetectionRegValue -ExpressionOperator IsEquals -Is64Bit
+    Set-CMScriptDeploymentType -ApplicationName $SCCMAPPName -DeploymentTypeName $SCCMAPPName -AddDetectionClause $DetectionClause
+    }
+Catch {WriteLogs "ERROR - Unable to add detection Logic to: $SCCMAPPName" "$SCCMAPPName`.log" 
+    Continue}
+WriteLogs "SUCCESS - Detection Logic has been added into Application - $SCCMAPPName" "$SCCMAPPName`.log" 
+
+
+Set-CMApplication -InputObject $Application -DistributionPointSetting AutoDownload -DistributionPriority Medium
+
+$objFSO = New-Object -com  Scripting.FileSystemObject
+
+If (($objFSO.GetFolder($APPSourcePath).Size)/(1024*1024*1024) -Ge 5) { 
+WriteLogs "SKIPPING - Distribution Point Group -- $DistributionType -- has Not been added into Application due to Folder Size >= 4 GB - $SCCMAPPName $APPVersion" "$SCCMAPPName`.log" 
+}
+Else
+{
+
+    IF (!([string]::IsNullOrEmpty($Application.LocalizedDisplayName)))
+    {
+        WriteLogs "Enabling on-demand distribution on the Application $APPID" "$SCCMAPPName`.log" 
+        Try {$SetAutoDist = Set-CMApplication -InputObject $Application -SendToProtectedDistributionPoint $true}
+        Catch {WriteLogs "Error enabling on-demand distribution for Application: $APPID" "$SCCMAPPName`.log" Continue}
+        WriteLogs "SUCCESS - on-demand distribution set"  "$SCCMAPPName`.log" 
+    }
+    WriteLogs "PROCESS - Adding Distribution Point Group into Application.........$DistributionType" "$SCCMAPPName`.log" 
+    Try {Start-CMContentDistribution -ApplicationName $Application.LocalizedDisplayName -DistributionPointGroupName $DistributionType}
+    Catch {WriteLogs "ERROR - Invalid DP Group or Specified DP Group may already exist: $DistributionType" "$SCCMAPPName`.log" 
+        Continue}
+    WriteLogs "SUCCESS - Distribution Point Group -- $DistributionType -- has been added into Application - $SCCMAPPName " "$SCCMAPPName`.log" 
+}
+
+WriteLogs "PROCESS - Moving Application to Specific Application Folder.........$FolderPath" "$SCCMAPPName`.log" 
+#$SCCMAPPName = Get-CMApplication -Name $Application.LocalizedDisplayName
+Try {Move-CMObject -FolderPath "$FolderPath" -InputObject $Application }
+Catch {WriteLogs "ERROR - Invalid Folder path: $FolderPath" "$SCCMAPPName`.log" 
+        Continue}
+WriteLogs "SUCCESSS - Moved the Application -- $SCCMAPPName -- to Folder -- $FolderPath" "$SCCMAPPName`.log" 
+
+if (($DeployApp)){
+    WriteLogs "PROCESS - Deploying Test Application to Test Collection.........$SCCMAPPName" "$SCCMAPPName`.log"
+    Try {New-CMApplicationDeployment -CollectionName “Limiting - All SRS Test Machines” -InputObject $Application -DeployAction Install -DeployPurpose Available -UserNotification DisplayAll -AvailableDateTime (get-date) -TimeBaseOn LocalTime}
+    Catch {WriteLogs "ERROR - Invalid Collection Name or Deployment Already Exist: $SCCMAPPName" "$SCCMAPPName`.log" 
+            Continue}
+}
+$Application = ""
+
+}
+
+
+WriteLogs "............Script is completed................" "$SCCMAPPName`.log" 
+cd c:
+
+        
