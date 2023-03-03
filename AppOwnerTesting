@@ -1,0 +1,416 @@
+#Get the required params
+<#[CmdletBinding()]
+param(
+    [Parameter(Mandatory=$true)]
+    [String]$Username,
+  
+    [Parameter(Mandatory=$true)]
+    [String]$Password,
+
+    [Parameter(Mandatory=$true)]
+    [String]$To
+)#>
+
+# Set the style for the email
+$CSS = @"
+<Style>
+    table { margin: auto; font-family: Brandon Grotesque; border-collapse: collapse; }
+    table, th, td { border: 1px solid #E3E3E3; }
+    th { background: #AFC2C4; color: #fff; max-width: 400px; padding: 5px 10px; }
+    td { font-size: 11px; padding: 5px 20px; color: #000; }
+    tr { background: #fff; }
+<⁄style>
+"@
+
+# Formatting the first table to use in the email
+[array]$Object1 = $null
+[array]$Object1 += [PSCustomObject]@{
+    "Column Name 1" = "Value 1" 
+    "Column Name 2" = "Value 2"
+    "Column Name 3" = "Value 3"
+}
+
+# Formatting the second table to use in the email
+[array]$ValueList = $null
+[array]$ValueList += "Value 1"
+[array]$ValueList += "Value 2"
+[array]$ValueList += "Value 3"
+
+$OneValue = "Value 1"
+
+[array]$Object2 = $null
+[array]$Object2 += [PSCustomObject]@{         
+     "Column Name 1" = (@($ValueList) -join ', ')
+     "Column Name 2" = $OneValue
+}
+
+# Prepare the tables in the email. Use Fragment to join the two tables.
+$Table1 = ($Object1 | Sort-Object "Column Name 1", "Column Name 2", "Column Name 3" | Select-Object "Column Name 1", "Column Name 2", "Column Name 3" | ConvertTo-Html -Fragment)
+$Table2 = ($Object2 | Sort-Object "Column Name 1", "Column Name 2" | Select-Object "Column Name 1", "Column Name 2" | ConvertTo-Html -Fragment)
+
+#create Variable for storng machine name
+
+$Machine_INP = Read-Host "Please enter the UAT machine name"
+$Machine = $Machine_INP 
+$CMSLink = Read-Host "Please enter the CMS Link"
+$APPNAME = Read-Host "Please enter the Applicatio Name"
+$CMSNO = Read-Host "Please enter the CMS No"
+
+# Create the body of the email
+$Body = @"
+<html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns:m="http://schemas.microsoft.com/office/2004/12/omml" xmlns="http://www.w3.org/TR/REC-html40">
+  <head>
+    <meta http-equiv=Content-Type content="text/html; charset=us-ascii">
+    <meta name=Generator content="Microsoft Word 15 (filtered medium)">
+    <!--[if !mso]>
+				<style>v\:* {behavior:url(#default#VML);}
+o\:* {behavior:url(#default#VML);}
+w\:* {behavior:url(#default#VML);}
+.shape {behavior:url(#default#VML);}
+</style>
+				<![endif]-->
+    <style>
+      <!--
+      /* Font Definitions */
+      @font-face {
+        font-family: "Cambria Math";
+        panose-1: 2 4 5 3 5 4 6 3 2 4;
+      }
+
+      @font-face {
+        font-family: Calibri;
+        panose-1: 2 15 5 2 2 2 4 3 2 4;
+      }
+
+      /* Style Definitions */
+      p.MsoNormal,
+      li.MsoNormal,
+      div.MsoNormal {
+        margin: 0in;
+        font-size: 11.0pt;
+        font-family: "Calibri", sans-serif;
+      }
+
+      a:link,
+      span.MsoHyperlink {
+        mso-style-priority: 99;
+        color: #0563C1;
+        text-decoration: underline;
+      }
+
+      p.MsoListParagraph,
+      li.MsoListParagraph,
+      div.MsoListParagraph {
+        mso-style-priority: 34;
+        margin-top: 0in;
+        margin-right: 0in;
+        margin-bottom: 0in;
+        margin-left: .5in;
+        font-size: 11.0pt;
+        font-family: "Calibri", sans-serif;
+      }
+
+      p.msipfooter96e1959c,
+      li.msipfooter96e1959c,
+      div.msipfooter96e1959c {
+        mso-style-name: msipfooter96e1959c;
+        mso-margin-top-alt: auto;
+        margin-right: 0in;
+        mso-margin-bottom-alt: auto;
+        margin-left: 0in;
+        font-size: 11.0pt;
+        font-family: "Calibri", sans-serif;
+      }
+
+      span.EmailStyle20 {
+        mso-style-type: personal-reply;
+        font-family: "Calibri", sans-serif;
+        color: windowtext;
+      }
+
+      .MsoChpDefault {
+        mso-style-type: export-only;
+        font-size: 10.0pt;
+      }
+
+      @page WordSection1 {
+        size: 8.5in 11.0in;
+        margin: 1.0in 1.0in 1.0in 1.0in;
+      }
+
+      div.WordSection1 {
+        page: WordSection1;
+      }
+
+      /* List Definitions */
+      @list l0 {
+        mso-list-id: 1371414205;
+        mso-list-type: hybrid;
+        mso-list-template-ids: -326729340 67698703 67698713 67698715 67698703 67698713 67698715 67698703 67698713 67698715;
+      }
+
+      @list l0:level1 {
+        mso-level-tab-stop: none;
+        mso-level-number-position: left;
+        text-indent: -.25in;
+      }
+
+      @list l0:level2 {
+        mso-level-number-format: alpha-lower;
+        mso-level-tab-stop: none;
+        mso-level-number-position: left;
+        text-indent: -.25in;
+      }
+
+      @list l0:level3 {
+        mso-level-number-format: roman-lower;
+        mso-level-tab-stop: none;
+        mso-level-number-position: right;
+        text-indent: -9.0pt;
+      }
+
+      @list l0:level4 {
+        mso-level-tab-stop: none;
+        mso-level-number-position: left;
+        text-indent: -.25in;
+      }
+
+      @list l0:level5 {
+        mso-level-number-format: alpha-lower;
+        mso-level-tab-stop: none;
+        mso-level-number-position: left;
+        text-indent: -.25in;
+      }
+
+      @list l0:level6 {
+        mso-level-number-format: roman-lower;
+        mso-level-tab-stop: none;
+        mso-level-number-position: right;
+        text-indent: -9.0pt;
+      }
+
+      @list l0:level7 {
+        mso-level-tab-stop: none;
+        mso-level-number-position: left;
+        text-indent: -.25in;
+      }
+
+      @list l0:level8 {
+        mso-level-number-format: alpha-lower;
+        mso-level-tab-stop: none;
+        mso-level-number-position: left;
+        text-indent: -.25in;
+      }
+
+      @list l0:level9 {
+        mso-level-number-format: roman-lower;
+        mso-level-tab-stop: none;
+        mso-level-number-position: right;
+        text-indent: -9.0pt;
+      }
+
+      @list l1 {
+        mso-list-id: 1628121486;
+        mso-list-template-ids: -1124289336;
+      }
+
+      ol {
+        margin-bottom: 0in;
+      }
+
+      ul {
+        margin-bottom: 0in;
+      }
+      -->
+    </style>
+    <!--[if gte mso 9]>
+				<xml>
+					<o:shapedefaults v:ext="edit" spidmax="1026" />
+				</xml>
+				<![endif]-->
+    <!--[if gte mso 9]>
+				<xml>
+					<o:shapelayout v:ext="edit">
+						<o:idmap v:ext="edit" data="1" />
+					</o:shapelayout>
+				</xml>
+				<![endif]-->
+  </head>
+  <body lang=EN-US link="#0563C1" vlink="#954F72" style='word-wrap:break-word'>
+    <div class=WordSection1>
+      <table class=MsoNormalTable border=1 cellspacing=0 cellpadding=0 width=698 style='width:523.35pt;background:white;border:solid #CFCFCF 1.0pt'>
+        <tr style='height:15.55pt'>
+          <td width="34%" valign=bottom style='width:34.64%;border:none;padding:0in 0in 0in 0in;height:15.55pt'>
+            <p class=MsoNormal>
+              <b>
+                <span style='font-family:"Arial",sans-serif;color:black'>
+                  <img width=144 height=92 style='width:1.5in;height:.9583in' id="_x0000_i1029" src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ3hlohEKMy5MBqwfPpyzmJrHRSIOcnVGqcmjbHwfmuJG9hAXRMOsp50auyBMQ_90GNkJk&amp;usqp=CAU" alt=hn-deere>
+                </span>
+              </b>
+              <b>
+                <span style='font-size:12.0pt;font-family:"Arial",sans-serif;color:black'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
+                <span style='color:black'></span>
+              </b>
+              <b>
+                <span style='font-size:13.0pt;font-family:"Arial",sans-serif;color:#367C2B'>
+                  <o:p></o:p>
+                </span>
+              </b>
+            </p>
+          </td>
+          <td width="65%" style='width:65.36%;border:none;padding:0in 13.5pt 0in 0in;height:15.55pt'>
+            <p class=MsoNormal style='margin-top:4.8pt'>
+              <b>
+                <span style='font-size:14.0pt;font-family:"Arial",sans-serif;color:#367C2B'>&nbsp;</span>
+              </b>
+              <b>
+                <span style='font-size:20.0pt;font-family:"Arial",sans-serif;color:#367C2B'>Desktop Software Delivery</span>
+              </b>
+              <b>
+                <span style='font-size:20.0pt;color:black'></span>
+              </b>
+              <b>
+                <span style='font-size:20.0pt;font-family:"Arial",sans-serif'>
+                  <o:p></o:p>
+                </span>
+              </b>
+            </p>
+          </td>
+        </tr>
+      </table>
+      <p class=MsoNormal>
+        <o:p>&nbsp;</o:p>
+      </p>
+      <p class=MsoNormal>&nbsp;&nbsp;&nbsp; <span style='font-family:"Arial",sans-serif'>Hello, <o:p></o:p>
+        </span>
+      </p>
+      <table class=MsoNormalTable border=0 cellspacing=0 cellpadding=0 align=left width=716 style='width:536.8pt;margin-left:6.75pt;margin-right:6.75pt'>
+        <tr style='height:6.4pt'>
+          <td width="100%" valign=top style='width:100.0%;padding:7.5pt 0in 6.0pt 0in;height:6.4pt'>
+            <p class=MsoNormal style='mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+              <a name=English></a>
+              <span style='font-family:"Arial",sans-serif'>Application $APPNAME is now ready for UAT. Please refer below details to test the application and perform signoff. <o:p></o:p>
+              </span>
+            </p>
+            <p class=MsoNormal style='mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+              <span style='font-family:"Arial",sans-serif'>
+                <o:p>&nbsp;</o:p>
+              </span>
+            </p>
+            <p class=MsoNormal style='mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+              <span style='font-family:"Arial",sans-serif'>Steps to follow: <o:p></o:p>
+              </span>
+            </p>
+            <p class=MsoNormal style='mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+              <span style='font-family:"Arial",sans-serif'>
+                <o:p>&nbsp;</o:p>
+              </span>
+            </p>
+            <ol style='margin-top:0in' start=1 type=1>
+              <li class=MsoListParagraph style='margin-left:0in;mso-list:l0 level1 lfo3;mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+                <span style='font-family:"Arial",sans-serif'>Login to the machine name $Machine <o:p></o:p>
+                </span>
+              </li>
+              <li class=MsoListParagraph style='margin-left:0in;mso-list:l0 level1 lfo3;mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+                <span style='font-family:"Arial",sans-serif'>Launch the application and perform complete testing <o:p></o:p>
+                </span>
+              </li>
+              <li class=MsoListParagraph style='margin-left:0in;mso-list:l0 level1 lfo3'>
+                <span style='font-family:"Arial",sans-serif'>Once tested please sign off the application using <a href=$CMSLink>CMS Link</a> . <o:p></o:p>
+                </span>
+              </li>
+            </ol>
+            <p class=MsoNormal style='mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+              <span style='font-family:"Arial",sans-serif'>
+                <o:p>&nbsp;</o:p>
+              </span>
+            </p>
+            <p class=MsoNormal align=center style='text-align:center;mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+              <span style='font-family:"Arial",sans-serif'>
+                <o:p>&nbsp;</o:p>
+              </span>
+            </p>
+            <p class=MsoNormal style='mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+              <span style='font-family:"Arial",sans-serif'>If you have any questions, please contact <a href="mailto:GlobalITIODesktopSoftwareDelivery@JohnDeere.com">GlobalITIODesktopSoftwareDelivery@JohnDeere.com</a>. <o:p></o:p>
+              </span>
+            </p>
+            <p class=MsoNormal style='mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+              <o:p>&nbsp;</o:p>
+            </p>
+            <div class=MsoNormal align=center style='text-align:center;mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+              <hr size=2 width="100%" align=center>
+            </div>
+            <p class=MsoNormal style='mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+              <b>
+                <span style='font-size:12.0pt;font-family:"Arial",sans-serif;color:#367C2B'>Thank you! <o:p></o:p>
+                </span>
+              </b>
+            </p>
+            <p class=MsoNormal style='mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+              <b>
+                <span style='font-size:12.0pt;font-family:"Arial",sans-serif;color:#367C2B'>
+                  <o:p>&nbsp;</o:p>
+                </span>
+              </b>
+            </p>
+            <p class=MsoNormal style='mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+              <b>
+                <span style='font-size:12.0pt;font-family:"Arial",sans-serif;color:#367C2B'>Global IT IO Desktop Software Delivery</span>
+              </b>
+              <b>
+                <span style='font-size:13.0pt;font-family:"Arial",sans-serif'>
+                  <o:p></o:p>
+                </span>
+              </b>
+            </p>
+          </td>
+        </tr>
+        <tr style='height:6.4pt'>
+          <td width="100%" valign=top style='width:100.0%;padding:7.5pt 0in 6.0pt 0in;height:6.4pt'>
+            <p class=MsoNormal style='mso-element:frame;mso-element-frame-hspace:9.0pt;mso-element-wrap:around;mso-element-anchor-vertical:paragraph;mso-element-anchor-horizontal:column;mso-height-rule:exactly'>
+              <span style='font-family:"Arial",sans-serif'>
+                <o:p>&nbsp;</o:p>
+              </span>
+            </p>
+          </td>
+        </tr>
+      </table>
+      <p class=MsoNormal>
+        <o:p>&nbsp;</o:p>
+      </p>
+      <p class=MsoNormal>
+        <o:p>&nbsp;</o:p>
+      </p>
+      <p class=msipfooter96e1959c align=right style='margin:0in;text-align:right'>
+        <o:p>&nbsp;</o:p>
+      </p>
+    </div>
+  </body>
+</html>
+"@
+
+# Get credentials to send the email
+#[string][ValidateNotNullOrEmpty()]$passwd = $Password
+#$secpasswd = ConvertTo-SecureString -String $passwd -AsPlainText -Force
+#$cred = New-Object Management.Automation.PSCredential ($Username, $secpasswd)
+
+# Set up the email params
+#$Date = Get-Date -Format 'MMMM dd yyyy'
+#$From = $Username
+#$Subject_INP = Read-Host "Please enter the email Subject"
+#$Subject = $Subject_INP
+$NEWSUBJECT = "Application $APPNAME - $CMSNO | is ready for UAT"
+$SMTPPort = "587"
+$SMTPServer = "mail.dx.deere.com"
+$FromEmailAddress = "GlobalITIODesktopSoftwareDelivery@JohnDeere.com"
+$ToEmailAddress = Read-Host "Please enter the appowner email address"
+$CC1 = [adsisearcher]"(samaccountname=$env:USERNAME)" 
+$CC = $CC1.FindOne().Properties.mail
+
+
+
+# Send the email
+#Send-MailMessage -From $From -to $To -Subject $Subject -Body $Body -BodyAsHTML -SmtpServer $SMTPServer 
+#Send-MailMessage -To $ToEmailAddress -Subject $subject -Body $Body.ToString()  -From $FromEmailAddress -Cc $CC -SmtpServer "mail.dx.deere.com" -BodyAsHtml -Encoding utf8
+
+Send-MailMessage -From $FromEmailAddress -To $ToEmailAddress -Cc $CC -Subject $NEWSUBJECT -Body $Body.ToString()  -SmtpServer $SMTPServer -BodyAsHtml -Encoding utf8 
