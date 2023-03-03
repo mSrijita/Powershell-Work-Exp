@@ -1,0 +1,229 @@
+#==========================================================================
+# AUTHOR: , Deere & Company
+# DATE: 
+# Version: 1.1.0
+#==========================================================================
+
+#Enables the powershell common parameters and sets defaults http://technet.microsoft.com/en-us/library/hh847872.aspx
+[CmdletBinding()]
+
+#Script parameters
+param(
+	[ValidateSet('Install', 'Uninstall')]
+    [Alias('Action')]
+	[String] $Param = 'Install',
+	
+    [Alias('S', 'Silent')]
+    [Switch] $global:IsSilent,
+    <#
+    [Switch] $appv,
+    [Switch] $msix,
+    #>
+    
+    [Switch] $Test	
+)
+
+#Sets the default XAML Window State of the Splash Screen https://msdn.microsoft.com/en-us/library/system.windows.windowstate(v=vs.110).aspx
+$global:WindowState = 'Normal'
+
+if ($Test -eq $false) {
+    #Sets the main PowerShell console window visibility to hidden
+    Add-Type -Name win -Member '[DllImport("user32.dll")] public static extern bool ShowWindow(int handle, int state);' -Namespace native
+    $consoleHandle = ([System.Diagnostics.Process]::GetCurrentProcess() | Get-Process).MainWindowHandle
+    [native.win]::ShowWindow($consoleHandle, 0) | Out-Null
+
+}
+
+#Enforces best practices http://technet.microsoft.com/en-us/library/hh849692.aspx
+Set-StrictMode -Version '2.0'
+
+#Continues on error. http://technet.microsoft.com/en-us/library/hh847796.aspx
+$script:ErrorActionPreference = 'Continue' 
+    
+#Turns off confirmation prompt http://technet.microsoft.com/en-us/library/hh847796.aspx
+$ConfirmPreference = 'None'
+
+#Stores all of the machine & run time environment properties
+$global:EnvironmentProperties = @{
+    ComputerName = $env:computername
+    CurrentDirectory = ($MyInvocation.MyCommand.Path | Split-Path)
+    OSArchitecture = (Get-ItemProperty 'hklm:\system\currentcontrolset\control\session manager\Environment\' | select Processor_Architecture).Processor_Architecture
+    OSVersion = [version](Get-WmiObject Win32_OperatingSystem).Version
+    PendingReboot = (New-Object -COM Microsoft.Update.SystemInfo).RebootRequired
+    PowerShellVersion = [version]($PSVersionTable.PSVersion)
+    CLRVersion = [version]($PSVersionTable.CLRVersion)
+    PreferredDisplayLanguage = 'English'
+    ProgramFiles = ([System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles))
+    SystemDrive = $env:SystemDrive
+    TempDirectory = $env:temp
+    UserId = $null
+    UserProfileSid = $null
+    MsiExec = "$env:systemroot\system32\msiexec.exe"
+    PSExe = "$env:systemroot\System32\WindowsPowerShell\v1.0\powershell.exe"    
+}
+
+
+#Stores values referenced by the script during runtime
+$global:ScriptProperties = @{
+    AcceptableExitCodes = @(-1, 0, 3010)
+    ApplicationName = 'GitClient'
+    ApplicationManufacturer = 'Git'
+    ApplicationVersion = '2.23.0'
+	ApplicationRevision = 'R1'
+    ExitCode = $null
+    MinimumPowerShellVersion = [version]'3.0'
+    MinimumCLRVersion = [version]'4.0'
+    PreviousVersionsDetected = $false
+    SplashScreen = $null
+    SplashTitle = 'Installing'
+    UnsupportedOSVersions = @([version]'0.0')
+    Is64BitOnly = $false
+    AdminRequired = $false
+    Version = [version]'1.1'
+    installertype = 'script'
+}
+
+#Used to store properties specific to the software the script is intended for
+$global:SoftwareProperties = @(
+    @{
+        DisplayName = 'Git version 2.23.0.windows.1'
+        DisplayVersion = '2.23.0.windows.1'
+        #InstallPath = "msiexec.exe"
+        #InstallArguments = @('/i', "$($EnvironmentProperties.CurrentDirectory)\Media\Notepad++.msi","/l*v $($EnvironmentProperties.TempDirectory)\Notepad_install.log", '/qb!')              
+        InstallPath = "$($EnvironmentProperties.CurrentDirectory)\Media\Git-2.23.0-64-bit.exe"
+        InstallArguments = @("/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /LOG=$env:windir\Git_2.23.0_install.log")
+        IsInstalled = $null
+        UninstallKey = 'Git_is1'
+        UninstallPath = "$env:ProgramFiles\Git\unins000.exe"
+        UninstallArguments = @("/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /LOG=$env:windir\Git_2.23.0_uninstall.log")
+        #MSIX Uninstall Argument
+        #UninstallArguments = @("Remove-AppxPackage -Package AmazonWorkSpaces_2.5.12.0_x64__4t3k815jc9wf0")
+     }
+)
+
+
+#Entry Point
+function Start-Main {
+    #Import all files in the modules directory
+    $Modules = Get-Childitem "$($EnvironmentProperties.CurrentDirectory)\Modules" -recurse | ForEach-Object {
+        Import-Module $_.FullName -Force
+    }
+
+    #Creates the log file and logs the environment properties
+    Initialize-LogFile
+
+    #Sets values for any necessary global variables
+    Initialize-GlobalVariables
+
+    #Tests environment to ensure it is compatibile with the software
+    Test-EnvironmentCompatibility
+
+    #Getting command-line arguments
+    Get-Arguments
+
+    #Exiting Script.
+    Stop-Script
+}
+
+#Evaluates the arguments that were passed to the script on the command line
+function Get-Arguments {
+    Write-Log 'Checking for Arguments' -Header
+
+    if ($Param -eq 'Install') {
+        Write-Log 'Found Install on the command line.  Running Installer.'
+        Set-ScriptVisibility
+        Write-Log 'Finished checking for arguments' -Footer
+        
+        Invoke-Install
+        Invoke-RegBInsert
+    }
+
+    if ($Param -eq 'Uninstall') {
+        Write-Log 'Found Uninstall on the command line.  Running Uninstaller.'
+        Write-Log 'Finished checking for arguments' -Footer
+        
+        Invoke-Uninstall
+        Invoke-RegBRemove        
+    }    
+}
+
+
+function Invoke-Install() {
+    Write-Host "$(Get-Date) ****** Launching Install ******`r`n"
+    Write-Log 'Starting Install' -Header
+
+    $SoftwareProperties | ForEach-Object {
+        Write-Log "Installing with command: $($_.InstallPath) $($_.InstallArguments)"
+        Write-Verbose "(Start-Process -FilePath $($_.InstallPath) -ArgumentList $($_.InstallArguments) -Wait -PassThru -WindowStyle Hidden).ExitCode"
+        $ScriptProperties.ExitCode = (Start-Process -FilePath $_.InstallPath -ArgumentList $_.InstallArguments -Wait -PassThru -WindowStyle Hidden).ExitCode
+        
+        if(($ScriptProperties.ExitCode -eq 0) -or ($ScriptProperties.ExitCode -eq 3010) -or ($ScriptProperties.ExitCode -eq 1641)){$Status = "Success"}     
+        else{$Status = "Failed"}
+        $global:Result=$Status
+    }
+    Write-Log "install exited with code: $($ScriptProperties.ExitCode)"
+    Write-Log 'install Completed' -Footer    
+}
+
+Function Invoke-RegBInsert(){
+
+$RegB = -join($ScriptProperties.ApplicationManufacturer, "_" ,$ScriptProperties.ApplicationName, "_" ,$ScriptProperties.ApplicationVersion, "_" ,$ScriptProperties.ApplicationRevision)
+$regPath = "HKLM:\SOFTWARE\DeereKeys\InstalledApps\$RegB"
+$GetInstalledBY = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$InstallDate = Get-Date
+
+
+
+    if(-not (Test-Path $regPath)) {
+        New-Item -Path $regPath -Force -ItemType "Directory" | Out-Null
+        
+    }
+    New-ItemProperty -Path $regPath -Name "ApplicationName" -PropertyType "String" -Value ($ScriptProperties.ApplicationName) -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "ApplicationType" -PropertyType "String" -Value ($ScriptProperties.installertype) -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "ApplicationVersion" -PropertyType "String" -Value ($ScriptProperties.ApplicationVersion) -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "InstalledBy" -PropertyType "String" -Value "$GetInstalledBY" -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "InstalledDate" -PropertyType "String" -Value "$InstallDate" -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "InstalledStatus" -PropertyType "String" -Value "$Result" -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "JDInstallerVersion" -PropertyType "String" -Value ($ScriptProperties.Version) -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "Manufacturer" -PropertyType "String" -Value ($ScriptProperties.ApplicationManufacturer) -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "Release" -PropertyType "String" -Value ($ScriptProperties.ApplicationRevision) -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "Returncode" -PropertyType "String" -Value ($ScriptProperties.ExitCode) -Force | Out-Null
+
+}
+
+function Invoke-Uninstall() {
+    
+    
+    if(($ScriptProperties.installertype -eq 'appv') -or ($ScriptProperties.installertype -eq 'msix')) {
+        $SoftwareProperties | ForEach-Object {
+            Write-Log "Uninstalling with command: $($_.UninstallPath) $($_.UninstallArguments)"
+            Write-Verbose "(Start-Process -FilePath $($_.UninstallPath) -ArgumentList $($_.UninstallArguments) -Wait -PassThru -WindowStyle Hidden).ExitCode"
+            $ScriptProperties.ExitCode = (Start-Process -FilePath $_.UninstallPath -ArgumentList $_.UninstallArguments -Wait -PassThru -WindowStyle Hidden -ea SilentlyContinue).ExitCode
+       }
+    }
+    else {
+        $SoftwareProperties | ForEach-Object {
+            if ((Test-SoftwareInstalled -DisplayName $_.DisplayName -UninstallKey $_.UninstallKey)) {
+                Write-Log "Uninstalling with command: $($_.UninstallPath) $($_.UninstallArguments)"
+                Write-Verbose "(Start-Process -FilePath $($_.UninstallPath) -ArgumentList $($_.UninstallArguments) -Wait -PassThru -WindowStyle Hidden).ExitCode"
+                $ScriptProperties.ExitCode = (Start-Process -FilePath $_.UninstallPath -ArgumentList $_.UninstallArguments -Wait -PassThru -WindowStyle Hidden -ea SilentlyContinue).ExitCode
+            }
+        }       
+    }
+    
+    Write-Log "Uninstall exited with code: $($ScriptProperties.ExitCode)"
+    Write-Log 'Uninstall Completed' -Footer            
+}
+
+function Invoke-RegBRemove() {
+
+$RegB = -join($ScriptProperties.ApplicationManufacturer, "_" ,$ScriptProperties.ApplicationName, "_" ,$ScriptProperties.ApplicationVersion, "_" ,$ScriptProperties.ApplicationRevision)
+$regPath = "HKLM:\SOFTWARE\DeereKeys\InstalledApps\$RegB"
+
+    if(Test-Path $regPath){ 
+        Remove-Item $regPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+}
+
+#Starts the main entry point for the script
+Start-Main
