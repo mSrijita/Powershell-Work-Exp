@@ -1,0 +1,4 @@
+$CompName = "AZW10SINKW1697"
+#To start C$ share
+Invoke-Command -ComputerName $CompName -ScriptBlock {New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" -Name "AutoShareWks" -Value 1 -PropertyType DWORD -Force -ErrorAction Stop | Out-Null;Restart-Service -Name LanmanServer -Force -ErrorAction Stop}
+Invoke-WmiMethod -ComputerName $CompName -Class Win32_Process -Name Create -ArgumentList "powershell.exe -executionpolicy bypass -command Register-PSSessionConfiguration -Name Microsoft.PowerShell -Force" # To stop C$ share Invoke-Command -ComputerName $CompName -ScriptBlock {New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" -Name "AutoShareWks" -Value 0 -PropertyType DWORD -Force -ErrorAction Stop | Out-Null;Restart-Service -Name LanmanServer -Force -ErrorAction Stop}
