@@ -1,0 +1,492 @@
+#Enables the powershell common parameters and sets defaults http://technet.microsoft.com/en-us/library/hh847872.aspx
+[CmdletBinding()]
+
+#Script parameters
+param(
+	[ValidateSet('Install', 'Uninstall', 'Purge')]
+    [Alias('Action')]
+	[String] $Param = 'Install',
+	
+    [Alias('S', 'Silent')]
+    [Switch] $global:IsSilent,
+    <#
+    [Switch] $appv,
+    [Switch] $msix,
+    #>
+    
+    [Switch] $Test	
+)
+
+#Sets the default XAML Window State of the Splash Screen https://msdn.microsoft.com/en-us/library/system.windows.windowstate(v=vs.110).aspx
+$global:WindowState = 'Normal'
+
+if ($Test -eq $false) {
+    #Sets the main PowerShell console window visibility to hidden
+    Add-Type -Name win -Member '[DllImport("user32.dll")] public static extern bool ShowWindow(int handle, int state);' -Namespace native
+    $consoleHandle = ([System.Diagnostics.Process]::GetCurrentProcess() | Get-Process).MainWindowHandle
+    [native.win]::ShowWindow($consoleHandle, 0) | Out-Null
+
+}
+
+#Enforces best practices http://technet.microsoft.com/en-us/library/hh849692.aspx
+Set-StrictMode -Version '2.0'
+
+#Continues on error. http://technet.microsoft.com/en-us/library/hh847796.aspx
+$script:ErrorActionPreference = 'Continue' 
+    
+#Turns off confirmation prompt http://technet.microsoft.com/en-us/library/hh847796.aspx
+$ConfirmPreference = 'None'
+
+#Stores all of the machine & run time environment properties
+$global:EnvironmentProperties = @{
+    ComputerName = $env:computername
+    CurrentDirectory = ($MyInvocation.MyCommand.Path | Split-Path)
+    OSArchitecture = (Get-ItemProperty 'hklm:\system\currentcontrolset\control\session manager\Environment\' | select Processor_Architecture).Processor_Architecture
+    OSVersion = [version](Get-WmiObject Win32_OperatingSystem).Version
+    PendingReboot = (New-Object -COM Microsoft.Update.SystemInfo).RebootRequired
+    PowerShellVersion = [version]($PSVersionTable.PSVersion)
+    CLRVersion = [version]($PSVersionTable.CLRVersion)
+    PreferredDisplayLanguage = 'English'
+    ProgramFiles = ([System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles))
+    SystemDrive = $env:SystemDrive
+    TempDirectory = $env:temp
+    UserId = $null
+    UserProfileSid = $null
+    MsiExec = "$env:systemroot\system32\msiexec.exe"
+    PSExe = "$env:systemroot\System32\WindowsPowerShell\v1.0\powershell.exe"    
+}
+
+
+#Stores values referenced by the script during runtime
+$global:ScriptProperties = @{
+    AcceptableExitCodes = @(-1, 0, 3010)
+    ApplicationName = 'TeamViewer'
+    ApplicationManufacturer = 'TeamViewer'
+    ApplicationVersion = '15.34.4'
+    ActiveSetup = "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components"
+	ApplicationRevision = 'R1'
+    ExitCode = $null
+    MinimumPowerShellVersion = [version]'3.0'
+    MinimumCLRVersion = [version]'4.0'
+    PreviousVersionsDetected = $false
+    SplashScreen = $null
+    SplashTitle = 'Installing'
+    UnsupportedOSVersions = @([version]'0.0')
+    Is64BitOnly = $false
+    AdminRequired = $false
+    Version = [version]'1.1'
+    installertype = 'script'
+}
+
+#Used to store properties specific to the software the script is intended for
+$global:SoftwareProperties = @(
+    @{
+        DisplayName = 'TeamViewer'
+        DisplayVersion = '15.34.4'
+        InstallPath = "$($EnvironmentProperties.CurrentDirectory)\Media\TeamViewer_Setup_x64.exe"
+        InstallArguments = @('/S')
+        IsInstalled = $null
+        UninstallKey = 'TeamViewer'
+        UninstallPath = ""
+        UninstallArguments = @('/S')
+     }
+)
+
+#Entry Point
+function Start-Main {
+    #Import all files in the modules directory
+    $Modules = Get-Childitem "$($EnvironmentProperties.CurrentDirectory)\Modules" -recurse | ForEach-Object {
+        Import-Module $_.FullName -Force
+    }
+
+    #Creates the log file and logs the environment properties
+    Initialize-LogFile
+
+    #Sets values for any necessary global variables
+    Initialize-GlobalVariables
+
+    #Tests environment to ensure it is compatibile with the software
+    Test-EnvironmentCompatibility
+
+    #Getting command-line arguments
+    Get-Arguments
+
+    #Exiting Script.
+    Stop-Script
+}
+
+#Evaluates the arguments that were passed to the script on the command line
+function Get-Arguments {
+    Write-Log 'Checking for Arguments' -Header
+
+    if ($Param -eq 'Install') {
+        Write-Log 'Found Install on the command line.  Running Installer.'
+        Set-ScriptVisibility
+        Write-Log 'Finished checking for arguments' -Footer
+
+        $OS_Name = Get-WmiObject -Class Win32_OperatingSystem | ForEach-Object -MemberName Caption
+        if ($OS_Name -like '*Windows 7*'){
+        Write-Log "The current operating System is $OS_Name Due to security vulnerabilities TeamViewer is not approved to be installed on Windows 7 machines"
+        $msg =  "The install has detected this machine is on Windows 7.  Due to security vulnerabilities TeamViewer is not approved to be installed on Windows 7 machines.  Please contact the Service Desk if you have questions."
+			  [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
+			  [System.Windows.Forms.MessageBox]::Show($msg)
+        $ScriptProperties.ExitCode = 99
+        Stop-Script
+        }
+        
+        Invoke-PreVerUninstall
+        Invoke-Install
+        Invoke-RegBInsert
+    }
+
+    if ($Param -eq 'Uninstall') {
+        Write-Log 'Found Uninstall on the command line.  Running Uninstaller.'
+        Write-Log 'Finished checking for arguments' -Footer
+
+        Invoke-Uninstall
+        Invoke-RegBRemove
+    }  
+
+    if ($Param -eq 'Purge') {
+        Write-Log "Found Purge on the command line. Running Purge."
+        Write-Log 'Finished checking for arguments' -Footer
+
+        Invoke-Purge
+    }  
+}
+
+#Purges all instances of TeamViewer and emails CyberSecurityOperationsCenter@JohnDeere.com if found
+function Invoke-Purge {
+    Write-Log 'Starting Purge' -Header
+    $array = @()
+
+    Write-Log "Collecting all installed programs."
+
+    $keys = Get-Childitem -Path HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall | Get-ItemProperty
+    foreach($key in $keys) {
+        if($key.PSObject.Properties.name -match "DisplayName") {
+            $tmp = $key | where { $_.DisplayName -like "*TeamViewer*" }
+            $array += $tmp
+        }
+    }
+
+    if(Test-Path "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall") {
+        $keys = Get-Childitem -Path HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall | Get-ItemProperty
+        foreach($key in $keys) {
+            if($key.PSObject.Properties.name -match "DisplayName") {
+                $tmp = $key | where { $_.DisplayName -like "*TeamViewer*" }
+                $array += $tmp
+            }
+        }
+    }
+
+    Write-Log "Searching for instances of TeamViewer."
+    
+    foreach($item in $array) {
+        $str = $item.UninstallString
+        Write-Log "Uninstall found as $($str)"
+        Write-Log "Found entry named $($item.DisplayName)"
+
+        $ScriptProperties.ExitCode = (Start-Process -FilePath "$($str)" -ArgumentList "/S" -Wait -PassThru -WindowStyle Hidden).ExitCode
+
+        Write-Log "Uninstall exited with code $ScriptProperties.ExitCode"
+    }
+
+    if($array.Count -gt 0) {
+        Write-Log "TeamViewer Instances found, sending alert email."
+        Send_Email
+        #Write-Log "Email sent."
+    }
+
+    Write-Log 'Purge Completed' -Footer
+}
+function Send_Email(){
+	Write-Host "$(Get-Date) - Sending email."
+	$UserID = (Get-LoggedOnUsers | where-object { $_.state -eq "active"} | sort logontime | select -first 1).userid
+	Write-Host "$(Get-Date)  - The logged in user is $($UserID)."
+	
+	$searcher = [adsisearcher]"(samaccountname=$UserID)"
+	$EmailAddreess = "CyberSecurityOperationsCenter@JohnDeere.com"
+		
+    $body += "<br> This user $($EnvironmentProperties.UserId), had TeamViewer on their PC and it was removed due to lack of approval through JD-SRS<br>" 
+    	
+	if ($EmailAddreess -ne ""){Send-MailMessage -To $EmailAddreess -Subject "Unapproved TeamViewer Uninstall" -Body $body -From "DoNotReply@JohnDeere.com" -SmtpServer "mail.dx.deere.com" -BodyAsHtml -Encoding utf8}
+	Write-Host "$(Get-Date) - Email sent.`r`n"
+
+}
+
+function Invoke-PreVerUninstall(){
+
+    Write-Log 'Checking for Arguments' -Header
+
+    $array = @()
+
+    Write-Log "Collecting all installed programs."
+
+    $keys = Get-Childitem -Path HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall | Get-ItemProperty
+    foreach($key in $keys) {
+        if($key.PSObject.Properties.name -match "DisplayName") {
+            $tmp = $key | where { $_.DisplayName -like "*TeamViewer*" }
+            $array += $tmp
+        }
+    }
+
+    if(Test-Path "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall") {
+        $keys = Get-Childitem -Path HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall | Get-ItemProperty
+        foreach($key in $keys) {
+            if($key.PSObject.Properties.name -match "DisplayName") {
+                $tmp = $key | where { $_.DisplayName -like "*TeamViewer*" }
+                $array += $tmp
+            }
+        }
+    }
+
+    Write-Log "Searching for instances of TeamViewer."
+    
+    foreach($item in $array) {
+        $str = $item.UninstallString
+        Write-Log "Uninstall found as $($str)"
+        Write-Log "Found entry named $($item.DisplayName)"
+
+        $Exit = (Start-Process -FilePath "$($str)" -ArgumentList "/S" -Wait -PassThru -WindowStyle Hidden).ExitCode #Remove the EXE package
+        Get-Package | ? { $_.name -like "*TeamViewer*" } | Uninstall-Package -AllVersions -Force #Remove the MSI package
+        $Exit = 0
+        Write-Log "Uninstall exited with code $Exit"
+    }
+}
+
+#Installs the software
+function Invoke-Install() {
+      
+    Write-Log 'Starting Install' -Header
+	$SoftwareProperties | ForEach-Object {
+        if ((Test-SoftwareInstalled -DisplayName $_.DisplayName -UninstallKey $_.UninstallKey)) {
+            $_.IsInstalled = $true
+	        Write-Log "Application $($_.DisplayName) $($_.DisplayVersion) is already installed..."
+            Write-Log " restricting the user settings..."
+            Remove-RegKey -KeyRoot 'HKLM' -KeyPath 'SOFTWARE\TeamViewer\DefaultSettings\' -KeyName 'AccessControl' -RegistryType 'x64' -ea SilentlyContinue
+            Remove-RegKey -KeyRoot 'HKLM' -KeyPath 'SOFTWARE\TeamViewer\' -KeyName 'DefaultSettings' -RegistryType 'x64' -ea SilentlyContinue
+            Remove-RegKey -KeyRoot 'HKLM' -KeyPath 'SOFTWARE\TeamViewer\' -KeyName 'AccessControl' -RegistryType 'x64' -ea SilentlyContinue
+            Remove-RegKey -KeyRoot 'HKLM' -KeyPath 'SOFTWARE\TeamViewer\' -KeyName 'InteractionDefaults' -RegistryType 'x64' -ea SilentlyContinue
+            Remove-RegKey -KeyRoot 'HKLM' -KeyPath 'SOFTWARE\TeamViewer\' -KeyName 'MsgBoxDontShow' -RegistryType 'x64' -ea SilentlyContinue
+            Remove-RegKey -KeyRoot 'HKLM' -KeyPath 'SOFTWARE\TeamViewer\' -KeyName 'MultiMedia' -RegistryType 'x64' -ea SilentlyContinue
+            Remove-RegKey -KeyRoot 'HKLM' -KeyPath 'SOFTWARE\' -KeyName 'TeamViewer' -RegistryType 'x64' -ea SilentlyContinue
+            Remove-Item -Path "$($ScriptProperties.ActiveSetup)\TeamViewer-v15.2.2756" -Force -ErrorAction SilentlyContinue
+           
+            New-PSDrive -PSProvider Registry -Name HKUsers -Root HKEY_USERS
+            if(Test-path -Path "HKUsers:\$($EnvironmentProperties.UserProfileSid)\Software\TeamViewer"){
+            Write-Log "remving user settings from hkcu"
+            Remove-Item -Path "HKUsers:\$($EnvironmentProperties.UserProfileSid)\Software\TeamViewer" -Recurse -Force | out-null
+            }
+            #Removing HKEY_USERS Registry entry from all users who are not logged in
+$users = (Get-ChildItem -path c:\users).name
+#New-PSDrive -PSProvider Registry -Name HKUsers -Root HKEY_USERS
+ 
+ foreach($user in $users)
+ {
+ #Using errorActionPreference to catch the error in try block for reg load command
+
+ $ErrorActionPreference= "Stop"
+ 
+ try
+ {
+ reg load "hku\$user" "C:\Users\$user\NTUSER.DAT"
+ 
+            if(Test-Path -Path "HKUsers:\$user\Software\TeamViewer") {
+            Write-Log 'HKcu\Software\TeamViewer  registry exists'
+            Write-Log "Removing TeamViewer related HKcu\Software\TeamViewer registry entry from $user"
+            Remove-Item -Path "HKUsers:\$user\Software\TeamViewer" -Recurse -Force | out-null
+            }
+          
+            }
+            catch 
+            {
+                echo "User is Logged in. Hence the process cannot access the file because it is being used by another process."
+            }
+#Cleaning the handle before unloading the registry hive cleanly
+[gc]::collect()
+Start-Sleep -Seconds 2       
+
+  try{
+    reg unload "hku\$user"
+  }
+  catch
+  {
+      echo "User is Logged in. Hence the process cannot access the file because it is being used by another process."
+}
+  
+      
+  } 
+
+            Write-Log "Installing with command: $($_.InstallPath) $($_.InstallArguments)"
+        	Write-Verbose "(Start-Process -FilePath $($_.InstallPath) -ArgumentList $($_.InstallArguments) -Wait -PassThru -WindowStyle Hidden)"
+        	$ScriptProperties.ExitCode = (Start-Process -FilePath $_.InstallPath -ArgumentList $_.InstallArguments -Wait -PassThru -WindowStyle Hidden).ExitCode
+            if(($ScriptProperties.ExitCode -eq 0) -or ($ScriptProperties.ExitCode -eq 3010) -or ($ScriptProperties.ExitCode -eq 1641)){$Status = "Success"}     
+            else{$Status = "Failed"}
+            $global:Result=$Status
+	    	Write-Log "Install exited with code: $($ScriptProperties.ExitCode)"
+            Write-Log 'Install Completed' -Footer
+            #Disabling the outlook add-in
+            $ScriptProperties.ExitCode = (Start-Process -FilePath "$env:SystemRoot\System32\REG.exe" -ArgumentList "ADD HKLM\SOFTWARE\WOW6432Node\Microsoft\Office\Outlook\Addins\TeamViewerMeetingAddIn.AddIn /v LoadBehavior /t REG_SZ /d 2 /f /reg:32" -Wait -PassThru -WindowStyle Hidden).ExitCode
+            $ScriptProperties.ExitCode = (Start-Process -FilePath "$env:SystemRoot\System32\REG.exe" -ArgumentList "ADD HKLM\SOFTWARE\Microsoft\Office\Outlook\Addins\TeamViewerMeetingAddIn.AddIn /v LoadBehavior /t REG_SZ /d 2 /f /reg:64" -Wait -PassThru -WindowStyle Hidden).ExitCode
+            Stop-Script                                                                                       
+        }
+        Else{
+		    Write-Log "Installing with command: $($_.InstallPath) $($_.InstallArguments)"
+        	Write-Verbose "(Start-Process -FilePath $($_.InstallPath) -ArgumentList $($_.InstallArguments) -Wait -PassThru -WindowStyle Hidden)"
+        	$ScriptProperties.ExitCode = (Start-Process -FilePath $_.InstallPath -ArgumentList $_.InstallArguments -Wait -PassThru -WindowStyle Hidden).ExitCode
+            if(($ScriptProperties.ExitCode -eq 0) -or ($ScriptProperties.ExitCode -eq 3010) -or ($ScriptProperties.ExitCode -eq 1641)){$Status = "Success"}     
+            else{$Status = "Failed"}
+            $global:Result=$Status
+	    	Write-Log "Install exited with code: $($ScriptProperties.ExitCode)"
+            Write-Log "Setting registry entries"
+
+   if($EnvironmentProperties.OSArchitecture -eq "AMD64") {
+        $RegPath = ".\Software\Wow6432Node\TeamViewer"
+    } else {
+        $RegPath = ".\Software\TeamViewer"
+    }
+
+    Push-Location
+    Set-Location HKLM:
+    if(-Not (Test-Path $RegPath)) {
+        New-Item -Path $RegPath -Force -ItemType "Directory" | Out-Null
+    }
+    if(-Not (Test-Path "$($RegPath)\AccessControl")) {
+        New-Item -Path "$($RegPath)\AccessControl" -Force -ItemType "Directory" | Out-Null
+    }
+    if(-Not (Test-Path "$($RegPath)\DefaultSettings")) {
+        New-Item -Path "$($RegPath)\DefaultSettings" -Force -ItemType "Directory" | Out-Null
+    }
+    if(-Not (Test-Path "$($RegPath)\DefaultSettings\AccessControl")) {
+        New-Item -Path "$($RegPath)\DefaultSettings\AccessControl" -Force -ItemType "Directory" | Out-Null
+    }
+
+    New-ItemProperty -Path "$($RegPath)" -Name "RemoteMonitoring_Activated" -PropertyType "DWord" -Value 0 | Out-Null -ErrorAction SilentlyContinue
+    New-ItemProperty -Path "$($RegPath)" -Name "UpdateCheckInterval" -PropertyType "DWord" -Value 2 | Out-Null -ErrorAction SilentlyContinue
+    New-ItemProperty -Path "$($RegPath)\DefaultSettings" -Name "ConfirmRecordingRemoteControl" -PropertyType "DWord" -Value 0 | Out-Null -ErrorAction SilentlyContinue
+    New-ItemProperty -Path "$($RegPath)\DefaultSettings" -Name "ClientTabs" -PropertyType "DWord" -Value 1 | Out-Null -ErrorAction SilentlyContinue
+    New-ItemProperty -Path "$($RegPath)\DefaultSettings" -Name "ConfirmRecordingMeeting" -PropertyType "DWord" -Value 0 | Out-Null -ErrorAction SilentlyContinue
+    New-ItemProperty -Path "$($RegPath)\DefaultSettings" -Name "ChangeDynamicPassword" -PropertyType "DWord" -Value 1 | Out-Null -ErrorAction SilentlyContinue
+    New-ItemProperty -Path "$($RegPath)\DefaultSettings\AccessControl" -Name "AC_Pres_Autostart" -PropertyType "DWord" -Value 0 | Out-Null -ErrorAction SilentlyContinue
+    New-ItemProperty -Path "$($RegPath)\AccessControl" -Name "AC_Server_AccessControlType" -PropertyType "DWord" -Value "1" -Force | Out-Null -ErrorAction SilentlyContinue
+
+    #New-ItemProperty -Path "$($RegPath)" -Name LicenseKeyAES -PropertyType "Binary" -Value ([byte[]](0x10,0xd6,0x3c,0x2d,0x51,0x39,0x36,0x01,0x83,0x9b,0x55,0xe3,0x51,0x1f,0x29,0xfc,0x59,0x16,0x16,0xf6,0x1e,0x55,0x18,0xac,0x4f,0xeb,0x58,0x27,0x04,0xcf,0x45,0x86,0xf0,0x52,0x4f,0x3e,0x5b,0xe6,0xde,0xc7,0x9e,0x5a,0x9b,0x95,0x15,0xc8,0x5b,0xa6)) -Force | Out-Null
+    #New-ItemProperty -Path "$($RegPath)" -Name LicenseKeyAES -PropertyType "Binary" -Value ([byte[]](0x10,0xd6,0x3c,0x2d,0x51,0x39,0x36,0x01,0x83,0x9b,0x55,0xe3,0x51,0x1f,0x29,0xfc,0x21,0x5e,0x38,0xc4,0x74,0xbf,0x47,0xe5,0x7c,0xe3,0x55,0xad,0x9a,0x7d,0x5b,0xd9,0x04,0xad,0xfa,0x07,0x79,0xb2,0x26,0x45,0x66,0x31,0xe0,0x6c,0xa9,0x36,0xd3,0xfa)) -Force | Out-Null
+            
+        #Disabling the outlook add-in
+         $ScriptProperties.ExitCode = (Start-Process -FilePath "$env:SystemRoot\System32\REG.exe" -ArgumentList "ADD HKLM\SOFTWARE\WOW6432Node\Microsoft\Office\Outlook\Addins\TeamViewerMeetingAddIn.AddIn /v LoadBehavior /t REG_SZ /d 2 /f /reg:32" -Wait -PassThru -WindowStyle Hidden).ExitCode
+
+         $ScriptProperties.ExitCode = (Start-Process -FilePath "$env:SystemRoot\System32\REG.exe" -ArgumentList "ADD HKLM\SOFTWARE\Microsoft\Office\Outlook\Addins\TeamViewerMeetingAddIn.AddIn /v LoadBehavior /t REG_SZ /d 2 /f /reg:64" -Wait -PassThru -WindowStyle Hidden).ExitCode       
+            
+            Write-Log 'Install Completed' -Footer
+
+            if ($ScriptProperties.ExitCode -eq 0)
+    {
+        # Email to user
+        Write-log "sending email to user"
+        $UserID = (Get-LoggedOnUsers | where-object { $_.state -eq "active"} | sort logontime | select -first 1).userid
+        $searcher = [adsisearcher]"(samaccountname=$UserID)"
+        $EmailAddress = $searcher.FindOne().Properties.mail
+        $Name = $searcher.FindOne().Properties.name
+
+        $body = "<br>Dear TeamViewer User,<br>"
+        $body += "<br>"
+        $body += "<br>The application will require you to sign-in with your TeamViewer credentials. If you have already created Teamviewer account, use it to sign-in the application. In case you are new user, follow below process. " 
+        $body += "<br>"
+        $body += "<br>You will receive email from service-noreply@teamviewer.com. Please set up and activate your account by clicking on the link shared in that email.."
+        $body += "<br>"
+        $body += "<br>Once you activate the account, Follow below steps to sign-in"
+        $body += "<br>1.	Click on the start button or in the left corner of your computer screen"
+        $body += "<br>2.	Type TeamViewer and click on the application"
+        $body += "<br>3.	Sign-in using your TeamViewer credentials"
+        $body += "<br>"
+        $body += "<br>If you have questions, please contact the Global IT Service Desk https://johndeere.service-now.com/ep/"
+        $body += "<br>"
+        $body += "<br> This message is being sent from an unmonitored mailbox. Please don’t reply to this email"
+        if ($EmailAddress -ne "") { Send-MailMessage -To $EmailAddress -Subject "TeamViewer software requires Sign-in" -Body $body -From "JohnDeereSelfServiceRequestSystem@JohnDeere.com" -SmtpServer "mail.dx.deere.com" -BodyAsHtml -Encoding utf8 }
+    }
+        }
+    }
+}
+
+Function Invoke-RegBInsert(){
+
+$RegB = -join($ScriptProperties.ApplicationManufacturer, "_" ,$ScriptProperties.ApplicationName, "_" ,$ScriptProperties.ApplicationVersion, "_" ,$ScriptProperties.ApplicationRevision)
+$regPath = "HKLM:\SOFTWARE\DeereKeys\InstalledApps\$RegB"
+$GetInstalledBY = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$InstallDate = Get-Date
+
+
+
+    if(-not (Test-Path $regPath)) {
+        New-Item -Path $regPath -Force -ItemType "Directory" | Out-Null
+        
+    }
+    New-ItemProperty -Path $regPath -Name "ApplicationName" -PropertyType "String" -Value ($ScriptProperties.ApplicationName) -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "ApplicationType" -PropertyType "String" -Value ($ScriptProperties.installertype) -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "ApplicationVersion" -PropertyType "String" -Value ($ScriptProperties.ApplicationVersion) -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "InstalledBy" -PropertyType "String" -Value "$GetInstalledBY" -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "InstalledDate" -PropertyType "String" -Value "$InstallDate" -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "InstalledStatus" -PropertyType "String" -Value "$Result" -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "JDInstallerVersion" -PropertyType "String" -Value ($ScriptProperties.Version) -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "Manufacturer" -PropertyType "String" -Value ($ScriptProperties.ApplicationManufacturer) -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "Release" -PropertyType "String" -Value ($ScriptProperties.ApplicationRevision) -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name "Returncode" -PropertyType "String" -Value ($ScriptProperties.ExitCode) -Force | Out-Null
+
+}
+
+function Invoke-Uninstall() {
+  Write-Log 'Starting Uninstall' -Header
+
+    $SoftwareProperties | ForEach-Object {
+
+        if ((Test-SoftwareInstalled -DisplayName $_.DisplayName -UninstallKey $_.UninstallKey)) {
+            Write-Log "Uninstalling with command: $($_.UninstallPath) $($_.UninstallArguments)"
+
+            $UninstallString = Get-ItemPropertyValue -Path 'HKLM:SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\TeamViewer' -name 'uninstallstring' -ErrorAction 'SilentlyContinue'
+            Write-Verbose "(Start-Process -FilePath $($UninstallString) -ArgumentList $($_.UninstallArguments) -Wait -PassThru -WindowStyle Hidden).ExitCode"
+            $ScriptProperties.ExitCode = (Start-Process -FilePath $UninstallString -ArgumentList $_.UninstallArguments -Wait -PassThru -WindowStyle Hidden).ExitCode
+
+            Write-Log "Uninstall exited with code: $($ScriptProperties.ExitCode)"    
+        }
+    }
+
+ 
+    if ($ScriptProperties.ExitCode -eq "0") 
+        { 
+            
+            if($EnvironmentProperties.OSArchitecture -eq "AMD64") {
+        $InstLocation = "$Env:SystemDrive\Program Files (x86)\TeamViewer"
+    } else {
+        $InstLocation = "$Env:SystemDrive\Program Files\TeamViewer"
+    }
+            
+            Write-Log "Removing Active Setup registry keys"
+            Remove-Item $InstLocation -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path "$($ScriptProperties.ActiveSetup)\TeamViewer-v15.2.2756" -Force -ErrorAction SilentlyContinue
+            Remove-RegKey -KeyRoot 'HKLM' -KeyPath 'SOFTWARE\TeamViewer\DefaultSettings\' -KeyName 'AccessControl' -RegistryType 'x64' -ea SilentlyContinue
+            Remove-RegKey -KeyRoot 'HKLM' -KeyPath 'SOFTWARE\TeamViewer\' -KeyName 'DefaultSettings' -RegistryType 'x64' -ea SilentlyContinue
+            Remove-RegKey -KeyRoot 'HKLM' -KeyPath 'SOFTWARE\TeamViewer\' -KeyName 'AccessControl' -RegistryType 'x64' -ea SilentlyContinue
+            Remove-RegKey -KeyRoot 'HKLM' -KeyPath 'SOFTWARE\TeamViewer\' -KeyName 'InteractionDefaults' -RegistryType 'x64' -ea SilentlyContinue
+            Remove-RegKey -KeyRoot 'HKLM' -KeyPath 'SOFTWARE\TeamViewer\' -KeyName 'MsgBoxDontShow' -RegistryType 'x64' -ea SilentlyContinue
+            Remove-RegKey -KeyRoot 'HKLM' -KeyPath 'SOFTWARE\TeamViewer\' -KeyName 'MultiMedia' -RegistryType 'x64' -ea SilentlyContinue
+            Remove-RegKey -KeyRoot 'HKLM' -KeyPath 'SOFTWARE\' -KeyName 'TeamViewer' -RegistryType 'x64' -ea SilentlyContinue
+            
+    Write-Log "Uninstall exited with code: $($ScriptProperties.ExitCode)"
+    }    
+    Write-Log 'Uninstall Completed' -Footer
+}
+
+function Invoke-RegBRemove() {
+
+$RegB = -join($ScriptProperties.ApplicationManufacturer, "_" ,$ScriptProperties.ApplicationName, "_" ,$ScriptProperties.ApplicationVersion, "_" ,$ScriptProperties.ApplicationRevision)
+$regPath = "HKLM:\SOFTWARE\DeereKeys\InstalledApps\$RegB"
+
+    if(Test-Path $regPath){ 
+        Remove-Item $regPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+}
+
+#Starts the main entry point for the script
+Start-Main
