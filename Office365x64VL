@@ -1,0 +1,1376 @@
+#==========================================================================
+# AUTHOR: Koushik Rudra, Deere & Company
+# DATE: 02/24/2022
+#==========================================================================
+# Office Uninstall does not uninstall Visio/Project Pro
+# Office Install prereq however uninstall Visio/Project Pro
+#Updates starting with Office 2002 script
+# Exact return code will be returned by the script instead of sending "1" for errors
+# Script removes Microsoft office folder under program Files and Program Files (x86) before starting install as this causing issues during install
+#==========================================================================
+
+#Enables the powershell common parameters and sets defaults http://technet.microsoft.com/en-us/library/hh847872.aspx
+[CmdletBinding()]
+
+#Script parameters http://technet.microsoft.com/en-us/library/hh847743.aspx
+param(
+    [ValidateSet('Install', 'Uninstall')]
+    [Alias('Action')]
+    [String] $Param = 'Install',
+
+    [Alias('Silent', 'S')]
+    [Switch] $IsSilent,
+
+    [Alias('Prereq')]
+    [Switch] $RunPreReq,
+
+	[Switch] $Test
+
+)
+
+if ($Test -eq $false) {
+    #Sets the main PowerShell console window visibility to hidden
+    Add-Type -Name win -Member '[DllImport("user32.dll")] public static extern bool ShowWindow(int handle, int state);' -Namespace native
+    $consoleHandle = ([System.Diagnostics.Process]::GetCurrentProcess() | Get-Process).MainWindowHandle
+    [native.win]::ShowWindow($consoleHandle, 0) | Out-Null
+}
+
+#Enforces best practices http://technet.microsoft.com/en-us/library/hh849692.aspx
+Set-StrictMode -Version '2.0'
+
+#Continues on error. http://technet.microsoft.com/en-us/library/hh847796.aspx
+$script:ErrorActionPreference = 'Continue' 
+    
+#Turns off confirmation prompt http://technet.microsoft.com/en-us/library/hh847796.aspx
+$ConfirmPreference = 'None'
+
+#Stores all of the machine & run time environment properties
+$EnvironmentProperties = @{
+    ComputerName = $env:computername
+    CurrentDirectory = ($MyInvocation.MyCommand.Path | Split-Path)
+    OSArchitecture = (Get-ItemProperty 'hklm:\system\currentcontrolset\control\session manager\Environment\' | select Processor_Architecture).Processor_Architecture
+    OSVersion = [version](Get-WmiObject Win32_OperatingSystem).Version
+    PowerShellVersion = [version]($PSVersionTable.PSVersion)
+    CLRVersion = [version]($PSVersionTable.CLRVersion)
+    PreferredDisplayLanguage = 'English'
+    ProgramFiles = ([System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles))
+    SystemDrive = $env:SystemDrive
+    TempDirectory = $env:temp
+    UserId = $null
+    UserProfileSid = $null
+}
+
+
+#Stores values referenced by the script during runtime
+$ScriptProperties = @{
+    AcceptableExitCodes = @(-1, 0, 3010, 2359302)
+    ApplicationName = 'Microsoft Office Professional Plus 2021 English Only 64 Bit'
+    ExitCode = -1
+    MuiSplashScreen = $null
+    SplashScreen = $null
+    SplashTitle = 'Installing'
+    TimerWindow = $null
+    MinimumPowerShellVersion = [version]'3.0'
+    MinimumCLRVersion = [version]'4.0'
+}
+
+
+#Used to store properties specific to the software the script is intended for
+$SoftwareProperties = @{
+        DisplayName = 'Microsoft Office LTSC Professional Plus 2021'
+        InstallPath = "$($EnvironmentProperties.CurrentDirectory)\Media\O365\setup.exe"
+        InstallArguments = @("/configure $($EnvironmentProperties.CurrentDirectory)\Media\O365\configuration_install_bits.xml")
+        IsInstalled = $null
+        UninstallKey = 'ProPlus2021Volume'
+        UninstallPath = "$($EnvironmentProperties.CurrentDirectory)\Media\O365\setup.exe"
+        UninstallArguments = @("/configure $($EnvironmentProperties.TempDirectory)\configuration_uninstall.xml")
+        Productid = 'ProPlus2021Volume'
+    }
+
+   
+#Stores Uninstall information for the previous versions of the software
+$OfficePreviousVersionProperties = @(
+    @{
+        DisplayName = 'Microsoft Lync 2010'
+        IsInstalled = $false
+        UninstallKey = '{81BE0B17-563B-45D4-B198-5721E6C665CD}'
+        UninstallPath = "$env:systemroot\system32\msiexec.exe"
+        UninstallArguments = @('/X', '{81BE0B17-563B-45D4-B198-5721E6C665CD}', '/QN', "/LV $($EnvironmentProperties.TempDirectory)\MSLync2010_Uninst.log", 'Reboot=ReallySuppress')
+    },
+
+    @{
+        DisplayName = 'Microsoft Lync 2010, MUI'
+        IsInstalled = $false
+        UninstallKey = '{CEECF731-3F08-4210-8073-7E87F58C01D3}'
+        UninstallPath = "$env:systemroot\system32\msiexec.exe"
+        UninstallArguments = @('/X', '{CEECF731-3F08-4210-8073-7E87F58C01D3}', '/QN', "/LV $($EnvironmentProperties.TempDirectory)\MSLync2010MUI_Uninst.log", 'Reboot=ReallySuppress')
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Professional Edition 2003'
+        IsInstalled = $false
+        UninstallKey = '{90110409-6000-11D3-8CFE-0150048383C9}'
+        UninstallPath = "$env:systemroot\system32\msiexec.exe"
+        UninstallArguments = @('/X', '{90110409-6000-11D3-8CFE-0150048383C9}', '/QN', "/LV $($EnvironmentProperties.TempDirectory)\Uninstall_Office_2003.log", "Reboot=ReallySuppress")
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Professional Plus 2007'
+        IsInstalled = $false
+        UninstallKey = '{90120000-0011-0000-0000-0000000FF1CE}'
+        UninstallPath = "$env:systemroot\system32\msiexec.exe"
+        UninstallArguments = @('/X', '{90120000-0011-0000-0000-0000000FF1CE}', '/QN', "/LV $($EnvironmentProperties.TempDirectory)\Uninstall_Office_2007_Standard.log", "Reboot=ReallySuppress")
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Professional Plus 2010'
+        IsInstalled = $false
+        UninstallKey = '{90140000-0011-0000-0000-0000000FF1CE}'
+        UninstallPath = "$($EnvironmentProperties.SystemDrive)\Program Files\Common Files\Microsoft Shared\Office14\Office Setup Controller\setup.exe"
+        UninstallArguments = @('/uninstall', 'ProPlus', '/config', "$($EnvironmentProperties.CurrentDirectory)\Media\O365\Uninstall_Office_2010_SILENT.xml")
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Professional Plus 2010'
+        IsInstalled = $false
+        UninstallKey = '{90140000-0011-0000-1000-0000000FF1CE}'
+        UninstallPath = "$($EnvironmentProperties.SystemDrive)\Program Files\Common Files\Microsoft Shared\Office14\Office Setup Controller\setup.exe"
+        UninstallArguments = @('/uninstall', 'ProPlus', '/config', "$($EnvironmentProperties.CurrentDirectory)\Media\O365\Uninstall_Office_2010_SILENT.xml")
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Professional Plus 2013'
+        IsInstalled = $false
+        UninstallKey = '{90150000-0011-0000-0000-0000000FF1CE}'
+        UninstallPath = "$($EnvironmentProperties.SystemDrive)\Program Files\Common Files\Microsoft Shared\Office15\Office Setup Controller\setup.exe"
+        UninstallArguments = @('/uninstall', 'ProPlus', '/config', "$($EnvironmentProperties.CurrentDirectory)\Media\O365\Uninstall_Office_2013_SILENT.xml")
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Professional Plus 2013'
+        IsInstalled = $false
+        UninstallKey = '{90150000-0011-0000-1000-0000000FF1CE}'
+        UninstallPath = "$($EnvironmentProperties.SystemDrive)\Program Files\Common Files\Microsoft Shared\Office15\Office Setup Controller\setup.exe"
+        UninstallArguments = @('/uninstall', 'ProPlus', '/config', "$($EnvironmentProperties.CurrentDirectory)\Media\O365\Uninstall_Office_2013_SILENT.xml")
+    },
+	
+	@{
+        DisplayName = 'Microsoft Office Professional Plus 2016'
+        IsInstalled = $false
+        UninstallKey = '{90160000-0011-0000-0000-0000000FF1CE}'
+        UninstallPath = "$($EnvironmentProperties.SystemDrive)\Program Files\Common Files\Microsoft Shared\Office16\Office Setup Controller\setup.exe"
+        UninstallArguments = @('/uninstall', 'ProPlus', '/config', "$($EnvironmentProperties.CurrentDirectory)\Media\O365\Uninstall_Office_2016_SILENT.xml")
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Professional Plus 2016'
+        IsInstalled = $false
+        UninstallKey = '{90160000-0011-0000-1000-0000000FF1CE}'
+        UninstallPath = "$($EnvironmentProperties.SystemDrive)\Program Files\Common Files\Microsoft Shared\Office16\Office Setup Controller\setup.exe"
+        UninstallArguments = @('/uninstall', 'ProPlus', '/config', "$($EnvironmentProperties.CurrentDirectory)\Media\O365\Uninstall_Office_2016_SILENT.xml")
+    },
+
+    @{
+        DisplayName = 'Microsoft Office 365 ProPlus - en-us'
+        IsInstalled = $null
+        UninstallKey = 'O365ProPlusRetail - en-us'
+        UninstallPath = "$($EnvironmentProperties.CurrentDirectory)\Media\O365\setup.exe"
+        UninstallArguments = @("/configure $($EnvironmentProperties.TempDirectory)\configuration_uninstall.xml")
+    },
+
+    @{
+        DisplayName = 'Microsoft 365 Apps for enterprise - en-us'
+        IsInstalled = $null
+        UninstallKey = 'O365ProPlusRetail - en-us'
+        UninstallPath = "$($EnvironmentProperties.CurrentDirectory)\Media\O365\setup.exe"
+        UninstallArguments = @("/configure $($EnvironmentProperties.TempDirectory)\configuration_uninstall.xml")
+    }
+)
+
+$ProjectVisioVersionProperties = @(
+    @{
+        DisplayName = 'Microsoft Office Project Standard 2003'
+        IsInstalled = $false
+        UninstallKey = '{903A0409-6000-11D3-8CFE-0150048383C9}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Project Professional 2003'
+        IsInstalled = $false
+        UninstallKey = '{903B0409-6000-11D3-8CFE-0150048383C9}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Project Standard 2007'
+        IsInstalled = $false
+        UninstallKey = '{90120000-003A-0000-0000-0000000FF1CE}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Project Professional 2007'
+        IsInstalled = $false
+        UninstallKey = '{90120000-003B-0000-0000-0000000FF1CE}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Project Standard 2010'
+        IsInstalled = $false
+        UninstallKey = '{90140000-003A-0000-0000-0000000FF1CE}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Project Professional 2010'
+        IsInstalled = $false
+        UninstallKey = '{90140000-003B-0000-0000-0000000FF1CE}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Project Standard 2010'
+        IsInstalled = $false
+        UninstallKey = '{90140000-003A-0000-1000-0000000FF1CE}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Project Professional 2010'
+        IsInstalled = $false
+        UninstallKey = '{90140000-003B-0000-1000-0000000FF1CE}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Project Standard 2013'
+        IsInstalled = $false
+        UninstallKey = '{90150000-003A-0000-0000-0000000FF1CE}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Project Professional 2013'
+        IsInstalled = $false
+        UninstallKey = '{90150000-003B-0000-0000-0000000FF1CE}'
+    },
+	
+    @{
+        DisplayName = 'Microsoft Office Visio Standard 2003'
+        IsInstalled = $false
+        UninstallKey = '{90530409-6000-11D3-8CFE-0150048383C9}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Visio Professional 2003'
+        IsInstalled = $false
+        UninstallKey = '{90510409-6000-11D3-8CFE-0150048383C9}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Visio Standard 2007'
+        IsInstalled = $false
+        UninstallKey = '{90120000-0053-0000-0000-0000000FF1CE}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Visio Professional 2007'
+        IsInstalled = $false
+        UninstallKey = '{90120000-0051-0000-0000-0000000FF1CE}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Visio 2010'
+        IsInstalled = $false
+        UninstallKey = '{90140000-0057-0000-0000-0000000FF1CE}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Office Visio 2010'
+        IsInstalled = $false
+        UninstallKey = '{90140000-0057-0000-1000-0000000FF1CE}'
+    },
+
+    @{
+        DisplayName = 'Microsoft Visio Standard 2013'
+        IsInstalled = $false
+        UninstallKey = '{90150000-0053-0000-0000-0000000FF1CE}'
+
+    },
+
+    @{
+        DisplayName = 'Microsoft Visio Professional 2013'
+        IsInstalled = $false
+        UninstallKey = '{90150000-0051-0000-0000-0000000FF1CE}'
+    }
+)
+
+#Entry Point
+function Start-Main {
+    #Creates the log file and logs the environment properties
+    Initialize-LogFile
+
+    #Import all files in the modules directory
+    Get-Childitem "$($EnvironmentProperties.CurrentDirectory)\Modules" -recurse | ForEach-Object {
+        Write-Log "Importing module $($_.Name)."
+        Import-Module $_.FullName -Force
+    }
+
+    #Sets values for any necessary global variables
+    Initialize-GlobalVariables
+
+    #Tests environment to ensure it is compatibile with the software
+    Test-Compatibility
+
+    #Getting command-line arguments
+    Get-Arguments
+
+    #Exiting Script.
+    Stop-Script
+}
+
+
+function Initialize-LogFile {
+    Start-Transcript -Path "$($EnvironmentProperties.TempDirectory)\EDS_$($ScriptProperties.ApplicationName).log" -Append | Out-Null
+
+    Write-Host "$([Environment]::NewLine)$('*' * 30) Starting Script $('*' * 30)$([Environment]::NewLine)"
+}
+
+
+function Initialize-GlobalVariables {
+    Write-Log 'Environment Properties' -Header
+
+    #Gets the currently logged on userId
+    $EnvironmentProperties.UserId = (Get-LoggedOnUsers | select -first 1).userid
+    
+    #Gets the currently logged on users's SID 
+    $EnvironmentProperties.UserProfileSid = Get-UserProfileSid
+    
+    #Gets the currently logged on user's preferred display language
+    $EnvironmentProperties.PreferredDisplayLanguage = Get-PreferredUILanguage
+
+    ($EnvironmentProperties.GetEnumerator() | Sort-Object Name) | ForEach-Object {
+        Write-Log "$($_.Key):  $($_.Value)"
+    }
+	
+
+    Write-Log 'Environment Properties' -Footer
+}
+
+
+function Test-Compatibility {
+    if ($EnvironmentProperties.OSVersion -le 5.2) {
+        Write-Log "The Operating System version $($EnvironmentProperties.OSVersion) is not supported by Office 2016.  Exiting script."
+        $ScriptProperties.ExitCode = 1
+        Stop-Script
+    }
+
+    Write-Log "Checking PowerShell version compatibility"
+    if ($EnvironmentProperties.PowerShellVersion -lt $ScriptProperties.MinimumPowerShellVersion) {
+        Write-Log "FAILED - The installed PowerShell version is lower than the minimum required version for the script to run properly.  Exiting script."
+        $ScriptProperties.ExitCode = 1
+        Stop-Script
+    } else {
+        Write-Log "PASSED - PowerShell version compatibility"
+    }
+
+    Write-Log "Checking Common Language Runtime for .Net Framework version compatibility"
+    if ($EnvironmentProperties.CLRVersion -lt $ScriptProperties.MinimumCLRVersion) {
+        Write-Log "FAILED - The installed Common Language Runtime for .Net Framework version is lower than the minimum required version for the script to run properly.  Exiting script."
+        $ScriptProperties.ExitCode = 1
+        Stop-Script
+    } else {
+        Write-Log "PASSED - Common Language Runtime for .Net Framework version compatibility"
+    }
+	if ($EnvironmentProperties.OSArchitecture -ne 'AMD64') {
+        Write-Log "The Operating System version $($EnvironmentProperties.OSVersion) is not supported by Office 2016.  Exiting script."
+        $ScriptProperties.ExitCode = 1
+        Stop-Script
+    }
+	else {
+        Write-Log "PASSED - Operating System Architecture compatibility"
+    }
+}
+
+
+function Get-Arguments {
+    Write-Log 'Checking for arguments' -Header 
+
+            $global:ProductID = $SoftwareProperties.Productid
+            $global:PreviousVersionProperties = $OfficePreviousVersionProperties
+			$global:ProjectVisioProperties = $ProjectVisioVersionProperties
+			
+    Write-Log "Installing $($SoftwareProperties.Displayname) EO 64 Bit"
+
+
+    if ($Param -eq 'Install') {
+        Write-Log 'Found Install on the command line.  Running Installer.'
+        Set-ScriptVisibility
+        Write-Log 'Finished checking for arguments' -Footer
+
+        if (($RunPreReq)){
+        
+            Invoke-Expression -Command "Powershell.exe $($EnvironmentProperties.CurrentDirectory)\Setup_Office2016PreRequisite.ps1 -action install -s"
+        
+        }
+		#Start-TimerWindow
+		  $officeProducts = @('communicator', 'excel', 'frontpg', 'infopath', 'lync', 'msaccess', 'mspub', 'onenote', 'onenotem', 'outlook', 'powerpnt', 'spdesign', 'visio', 'winproj', 'winword') | 
+           ForEach-Object {
+                  Stop-Process -name $_ -Force -ErrorAction 'SilentlyContinue'
+                }
+	    Test-ProjectVisioInstallation
+        Get-InstalledPreviousVersions
+        Invoke-PreviousVersionUninstall
+		
+        Invoke-Install
+
+        Invoke-PostInstall
+		
+		#Invoke-InstallOfficeThemes
+            
+        
+    }
+
+    if ($Param -eq 'Uninstall') {
+        Write-Log 'Found Uninstall on the command line.  Running Uninstaller.'
+        Write-Log 'Finished checking for arguments' -Footer
+
+        Invoke-Uninstall
+    }
+}
+
+
+function Set-ScriptVisibility {
+    if ($IsSilent) {
+        Write-Log 'Found Silent on the command line.  Running silent.'
+    } else {                 
+        Write-Log 'Found no silent arguments on the command line.  Running visible installation.'
+        Invoke-SplashScreen
+    }
+}
+
+
+function Invoke-SplashScreen {
+    try {
+        Write-Log "Starting installation splash screen."
+        $ScriptProperties.SplashScreen = New-Splash -ApplicationName $ScriptProperties.ApplicationName -DisplayLanguage $EnvironmentProperties.PreferredDisplayLanguage
+
+    } catch {
+        Write-Log 'Could not start the splash screen.  Please verify SplashScreen.psm1 is in the modules directory.' -Error
+    }
+}
+
+function Get-PreferredUILanguage {
+    #Gets all machine user profiles
+    Write-Verbose "Detecting the users PreferredUILanguage to determine which language to display the interface in."
+
+    $preferredLanguageTag = Get-RegValue -KeyRoot "HKU" -Key "$($EnvironmentProperties.UserProfileSid)\Control Panel\Desktop\" -Value "PreferredUILanguages" -ErrorAction 'SilentlyContinue'
+    
+    if (([String]::IsNullOrWhiteSpace($preferredLanguageTag))) {
+        $preferredLanguageTag = 'en-us'
+    }
+
+    $preferredLanguageTag = $preferredLanguageTag.ToLower()
+
+    if ($preferredLanguageTag -eq $null -or $preferredLanguageTag -match 'en-us') {
+        Write-Verbose "The PreferredUILanguages key was not detected or was a null value.  Setting display language to: English"
+        return 'English'
+    } else {
+        $preferredDisplayLanguage = $WindowsLanguageProperties | Where-Object { $_.LanguageTag -eq $preferredLanguageTag } | select -first 1
+    
+        if ($preferredLanguageTag -match $preferredDisplayLanguage.LanguageTag) {
+            Write-Verbose "Detected $($preferredDisplayLanguage.Language) as the preferred UI language."
+            Write-Verbose "Setting the splash screen display language to: $($preferredDisplayLanguage.Language)"
+            return $preferredDisplayLanguage.Language
+        }
+    }
+
+    Write-Verbose "Unknown language detected.  Setting language to English"
+    return 'English'
+}
+
+
+#Gets the currently logged on userId
+Function Get-LoggedOnUsers() {
+    $queryPath = "$Env:WinDir\system32\query.exe"
+
+$pattern = @"
+^
+# matches start of line symbol or empty character
+(?:\s?|>?|)
+# captures the user id
+(?<userid>[^>]\S+)
+# matches 2 or more consecutive spaces, but does not capture
+(?:\s{2,})
+# captures the session name
+(?<session_name>\S+)
+# matches 2 or more consecutive spaces, but does not capture
+(?:\s{2,})
+# captures the session id
+(?<session_id>\d{1,})
+# matches 2 or more consecutive spaces, but does not capture
+(?:\s{2,})
+# captures the state of the session
+(?<state>.+(?!\S\s{2}))
+# matches 2 or more consecutive spaces, but does not capture
+(?:\s{2,})
+# captures the idle time of the session
+(?<idle_time>.+(?!\S\s{2}))
+# matches 2 or more consecutive spaces, but does not capture
+(?:\s{2,})
+# captures the logon datetime
+(?<logon_time>\d{1,2}.\d{1,2}.\d{2,4}\s\d{1,2}.\d{1,2}\s\w{0,2})
+$
+"@
+
+    If ($EnvironmentProperties.OSArchitecture -match "AMD64") {
+        If (Test-Path "$Env:WinDir\sysnative\query.exe") {
+            $queryPath = "$Env:WinDir\sysnative\query.exe"
+        } Else {
+            $queryPath = "$Env:WinDir\system32\query.exe"
+        }   
+    }                 
+  
+    $query = Invoke-Expression "$querypath user | select -skip 1"
+    
+    $loggedOnUsers = @()
+
+    $query | ForEach-Object {
+
+        $results = [Regex]::Match($_, $pattern, 'IgnorePatternWhitespace')
+
+        
+        $results | ForEach-Object {
+            $userSession = @{
+                UserId = ($results.Groups['userid'].Value.Trim())
+                SessionName = ($results.Groups['session_name'].Value.Trim())
+                SessionId = ($results.Groups['session_id'].Value.Trim())
+                State = ($results.Groups['state'].Value.Trim())
+                IdleTime = ($results.Groups['idle_time'].Value.Trim())
+                LogonTime = ($results.Groups['logon_time'].Value.Trim())
+            }
+
+            $loggedOnUsers += $userSession
+        }
+    }
+
+  Return $loggedOnUsers
+}
+
+
+function Get-UserProfileSid {
+    Write-Verbose "Getting a list of user profiles on the machine."
+    $profileList = Get-RegKey -KeyRoot 'HKLM' -Key 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\' -ErrorAction 'SilentlyContinue'
+
+    #Loops through each profile and gets the Profile Path
+    $profileList | ForEach-Object {
+        $userProfileSid = $_
+        $profileImagePath = Get-RegValue -KeyRoot 'HKLM' -Key "SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$userProfileSid" -Value 'ProfileImagePath' -ErrorAction 'SilentlyContinue'
+
+        #Resets the $Matches variable to null
+        $Matches = $null
+
+        #Filters out the username from the Profile Path 
+        $profileImagePath | Where-Object {$_ -match '\d*\w*$'} | Out-Null
+
+        $profilePathUserId = $Matches[0]
+
+        #Matches the machine owners UserID to the UserID retrieved from the SID profile path.
+        if ($profilePathUserId -like $EnvironmentProperties.UserId) {
+            Write-Verbose "The profile path userID of: $profilePathUserId matched the currently logged on user of $($EnvironmentProperties.UserId)"
+            return $userProfileSid
+        }
+    }
+}
+
+function Get-InstalledPreviousVersions {
+    Write-Log 'Checking for previous versions.' -Header
+    
+    $PreviousVersionProperties | ForEach-Object {
+        if ((Test-SoftwareInstalled -DisplayName $_.DisplayName -UninstallKey $_.UninstallKey)) {
+            $_.IsInstalled = $true
+        }
+    }
+
+    Write-Log 'Finished checking for previous versions' -Footer
+}
+
+
+function Invoke-PreviousVersionUninstall {
+    Write-Log 'Starting previous version uninstall.' -Header
+    Write-Log 'Ending all running Microsoft Office processes.'
+
+    $officeProducts = @('communicator', 'excel', 'frontpg', 'infopath', 'lync', 'msaccess', 'mspub', 'onenote', 'onenotem', 'outlook', 'powerpnt', 'spdesign', 'visio', 'winproj', 'winword') | 
+    ForEach-Object {
+        Stop-Process -name $_ -Force -ErrorAction 'SilentlyContinue'
+    }
+
+    $PreviousVersionProperties | ForEach-Object {
+        $previousVersion = $_
+        if ($previousVersion.IsInstalled) {
+            Write-Log "Uninstalling $($previousVersion.DisplayName)"
+
+            if ($previousVersion.DisplayName -like '*Lync*') {
+                Write-Log "Uninstalling with command $($previousVersion.UninstallPath) $($previousVersion.UninstallArguments)"
+                $exitCode = (Start-Process -FilePath $previousVersion.UninstallPath -ArgumentList $previousVersion.UninstallArguments -Wait -PassThru -WindowStyle Hidden -ErrorAction 'SilentlyContinue').ExitCode
+            }
+            if (($previousVersion.DisplayName -like 'Microsoft * 2010') -and ($previousVersion.DisplayName -NotLike '*Lync*')) {
+			     If (-not (Test-Path "$($EnvironmentProperties.SystemDrive)\Program Files\Common Files\Microsoft Shared\Office14\Office Setup Controller\setup.exe"))
+					{
+                $previousVersion.UninstallPath = "$($EnvironmentProperties.SystemDrive)\Program Files (x86)\Common Files\Microsoft Shared\Office14\Office Setup Controller\setup.exe"
+                Write-Verbose "Was unable to find the Uninstall path in the $($EnvironmentProperties.SystemDrive)\Program Files"
+				}
+                Write-Log "Uninstalling with command $($previousVersion.UninstallPath) $($previousVersion.UninstallArguments)"
+                $exitCode = (Start-Process -FilePath $previousVersion.UninstallPath -ArgumentList $previousVersion.UninstallArguments -Wait -PassThru -WindowStyle Hidden `
+                    -ErrorAction 'SilentlyContinue').ExitCode
+            }
+            if (($previousVersion.DisplayName -like 'Microsoft * 2013') -and ($previousVersion.DisplayName -NotLike '*Lync*')) {
+			   If (-not (Test-Path "$($EnvironmentProperties.SystemDrive)\Program Files\Common Files\Microsoft Shared\Office15\Office Setup Controller\setup.exe")){
+                $previousVersion.UninstallPath = "$($EnvironmentProperties.SystemDrive)\Program Files (x86)\Common Files\Microsoft Shared\Office15\Office Setup Controller\setup.exe"
+                Write-Verbose "Was unable to find the Uninstall path in the $($EnvironmentProperties.SystemDrive)\Program Files"
+				}
+                Write-Log "Uninstalling with command $($previousVersion.UninstallPath) $($previousVersion.UninstallArguments)"
+                $exitCode = (Start-Process -FilePath $previousVersion.UninstallPath -ArgumentList $previousVersion.UninstallArguments -Wait -PassThru -WindowStyle Hidden `
+                    -ErrorAction 'SilentlyContinue').ExitCode  
+            }
+			
+			if (($previousVersion.DisplayName -like 'Microsoft * 2016') -and ($previousVersion.DisplayName -NotLike '*Lync*')) {
+			   If (-not (Test-Path "$($EnvironmentProperties.SystemDrive)\Program Files\Common Files\Microsoft Shared\Office16\Office Setup Controller\setup.exe")){
+                $previousVersion.UninstallPath = "$($EnvironmentProperties.SystemDrive)\Program Files (x86)\Common Files\Microsoft Shared\Office16\Office Setup Controller\setup.exe"
+                Write-Verbose "Was unable to find the Uninstall path in the $($EnvironmentProperties.SystemDrive)\Program Files"
+				}
+                Write-Log "Uninstalling with command $($previousVersion.UninstallPath) $($previousVersion.UninstallArguments)"
+                $exitCode = (Start-Process -FilePath $previousVersion.UninstallPath -ArgumentList $previousVersion.UninstallArguments -Wait -PassThru -WindowStyle Hidden `
+                    -ErrorAction 'SilentlyContinue').ExitCode  
+            }
+			
+            if(($previousVersion.DisplayName -like 'Microsoft * 365*')) {
+			   $PrevParamLanguages = @()
+			   $OfficeLanguageProperties.Products | Where-Object {$_.DisplayName.Contains("Microsoft Office 365 ProPlus")} | ForEach-Object {
+                   Write-Log $_.DisplayName
+                   if ((Test-SoftwareInstalled -DisplayName $_.DisplayName -UninstallKey $_.UninstallKey -DisplayVersion 15)) {
+                     $_.IsInstalled = $true   
+                   } 
+			       if ((Test-SoftwareInstalled -DisplayName $_.DisplayName -UninstallKey $_.UninstallKey -DisplayVersion 16)) {
+                         $_.IsInstalled = $true
+                         $previousVersion.UninstallPath = "$($EnvironmentProperties.CurrentDirectory)\Media\O365\setup.exe"			 
+                    } 
+                }  
+
+                $OfficeLanguageProperties | Where-Object {($_.Products).IsInstalled -eq $true} | ForEach-Object {
+                    $PrevParamLanguages += $_.LanguageCode
+                }
+
+                Write-Verbose "Contents of ParamLanguages:  $PrevParamLanguages"
+                Invoke-xmlConfiguration "configuration_uninstall.xml" $PrevParamLanguages $ProductID
+                Write-Log "Uninstalling with command $($previousVersion.UninstallPath) $($previousVersion.UninstallArguments)"
+                $exitCode = (Start-Process -FilePath $previousVersion.UninstallPath -ArgumentList $previousVersion.UninstallArguments -Wait -PassThru -WindowStyle Hidden `
+                    -ErrorAction 'SilentlyContinue').ExitCode  
+            }
+
+
+            if(($previousVersion.DisplayName -like 'Microsoft 365*')) {
+			   $PrevParamLanguages = @()
+			   $OfficeLanguageProperties.Products | Where-Object {$_.DisplayName.Contains("Microsoft 365 Apps for enterprise")} | ForEach-Object {
+                   Write-Log $_.DisplayName
+                   if ((Test-SoftwareInstalled -DisplayName $_.DisplayName -UninstallKey $_.UninstallKey -DisplayVersion 15)) {
+                     $_.IsInstalled = $true   
+                   } 
+			       if ((Test-SoftwareInstalled -DisplayName $_.DisplayName -UninstallKey $_.UninstallKey -DisplayVersion 16)) {
+                         $_.IsInstalled = $true
+                         $previousVersion.UninstallPath = "$($EnvironmentProperties.CurrentDirectory)\Media\O365\setup.exe"			 
+                    } 
+                }  
+
+                $OfficeLanguageProperties | Where-Object {($_.Products).IsInstalled -eq $true} | ForEach-Object {
+                    $PrevParamLanguages += $_.LanguageCode
+                }
+
+                Write-Verbose "Contents of ParamLanguages:  $PrevParamLanguages"
+                Invoke-xmlConfiguration "configuration_uninstall.xml" $PrevParamLanguages $ProductID
+                Write-Log "Uninstalling with command $($previousVersion.UninstallPath) $($previousVersion.UninstallArguments)"
+                $exitCode = (Start-Process -FilePath $previousVersion.UninstallPath -ArgumentList $previousVersion.UninstallArguments -Wait -PassThru -WindowStyle Hidden `
+                    -ErrorAction 'SilentlyContinue').ExitCode  
+            }
+            
+            Write-Log "$($previousVersion.DisplayName) uninstall exited with Exit Code: $exitCode"
+
+            if (-not($ScriptProperties.AcceptableExitCodes.Contains($exitCode))) {
+                Write-Log "An error occurred while uninstalling $($previousVersion.DisplayName)" -Error
+            }
+        }
+    }
+
+    Invoke-unPinfromTaskbar 'Uninstall'
+    
+    Write-Log 'Finished previous version uninstall.' -Footer
+}
+
+function Invoke-unPinfromTaskbar {
+    param($pinType)
+    
+    Write-Log "Starting the unPin from taskbar process" -Header
+    $officeIcons = @('outlook.exe', 'winword.exe', 'excel.exe', 'powerpnt.exe')
+    $shortcuts = @('Outlook 2013.lnk', 'Word 2013.lnk', 'Excel 2013.lnk', 'PowerPoint 2013.lnk')
+
+    $programFiles = $EnvironmentProperties.ProgramFiles
+
+    if ($EnvironmentProperties.OSArchitecture -eq 'AMD64') {
+        $programFiles = "$($EnvironmentProperties.SystemDrive)\Program Files"
+    }
+
+    if((Test-Path "$($EnvironmentProperties.SystemDrive)\ProgramData\Microsoft\Windows\Start Menu\Programs\Microsoft Office 2013")) {
+        $shellApplication = new-object -c shell.application
+        $shortcuts | ForEach-Object {
+            $pin = $shellApplication.namespace("$($EnvironmentProperties.SystemDrive)\ProgramData\Microsoft\Windows\Start Menu\Programs\Microsoft Office 2013").parsename($_)
+            
+            if ($pinType -eq 'Uninstall') {
+                Write-Log "Unpinning $_ from the taskbar."
+                $pin.invokeverb('taskbarunpin')
+            }
+            Start-Sleep -Seconds 1
+        }
+
+        Remove-Item "$($EnvironmentProperties.SystemDrive)\ProgramData\Microsoft\Windows\Start Menu\Programs\Microsoft Office 2013" -Recurse -Force
+    }
+
+    if ((Test-Path "$programFiles\Microsoft Office 15\root\office15\")) {
+        $shellApplication = new-object -c shell.application
+        $officeIcons | ForEach-Object {
+            $pin = $shellApplication.namespace("$programFiles\Microsoft Office 15\root\office15\").parsename($_)
+            
+            if ($pinType -eq 'Uninstall') {
+                Write-Log "Unpinning $_ from the taskbar."
+                $pin.invokeverb('taskbarunpin')
+            }
+            Start-Sleep -Seconds 1
+        }
+        
+    }               
+    
+
+    Write-Log "unPin from taskbar process completed" -Footer
+}
+
+function Invoke-Install { 
+    
+    if(test-path "$env:SystemDrive\Program Files\Microsoft Office"){
+        write-log "$env:SystemDrive\Program Files\Microsoft Office is present. Removing it." 
+        remove-item "$env:SystemDrive\Program Files\Microsoft Office" -recurse -force -ErrorAction SilentlyContinue
+    }
+    if(test-path "$env:SystemDrive\Program Files (x86)\Microsoft Office"){
+        write-log "$env:SystemDrive\Program Files (x86)\Microsoft Office is present. Removing it."
+        remove-item "$env:SystemDrive\Program Files (x86)\Microsoft Office" -recurse -force -ErrorAction SilentlyContinue
+    }
+
+    Write-Log 'Starting Install' -Header
+       
+    Write-Log "Installing with command: $($SoftwareProperties.InstallPath) $($SoftwareProperties.InstallArguments)"
+    
+    Write-Verbose "(Start-Process -FilePath $($SoftwareProperties.InstallPath) -ArgumentList $($SoftwareProperties.InstallArguments) -Wait -PassThru -WindowStyle Hidden).ExitCode"
+    $ScriptProperties.ExitCode = (Start-Process -FilePath $SoftwareProperties.InstallPath -ArgumentList $SoftwareProperties.InstallArguments -Wait -PassThru -WindowStyle Hidden).ExitCode
+	Write-log "Setup completed with an exit code of: $($ScriptProperties.ExitCode)"
+    $OfficeLanguageProperties.Products | Where-Object {$_.DisplayName.Contains("$($SoftwareProperties.DisplayName)")} | ForEach-Object {
+        if ((Test-SoftwareInstalled -DisplayName $_.DisplayName -UninstallKey $_.UninstallKey -DisplayVersion 16)) {
+            $verifyinstall = $true
+        }        
+    }
+    if (($ScriptProperties.AcceptableExitCodes.Contains($ScriptProperties.ExitCode)) -and ($verifyinstall -eq $true))
+	{
+	   Write-Log "Install completed with an exit code of: $($ScriptProperties.ExitCode)"
+	}
+	 else
+	 {
+	 # $ScriptProperties.ExitCode = 1 #commented from 2002 version because the exact return code should be captured
+	 
+	 Write-Log "FAILED - An error occurred during installation.Exiting script with an error code of: $($ScriptProperties.ExitCode)"
+	 Stop-Script
+	 }
+     
+	
+    Write-Log 'Install Completed' -Footer
+}
+
+
+function Invoke-PostInstall {
+    Write-Log 'Starting Post-Install' -Header
+
+    Write-Log 'Checking to see which products are installed and setting the NoModify key to 1.'
+    $OfficeLanguageProperties.Products | Where-Object {$_.UninstallKey -match $SoftwareProperties.Uninstallkey} | ForEach-Object {
+        if ((Test-MuiInstalled -DisplayName $_.DisplayName -UninstallKey $_.UninstallKey)) {
+            Write-Log "Setting the NoModify value to 1 for Uninstall Key $($_.UninstallKey)"
+
+            $null = Set-RegValue -Root LocalMachine -Key "SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\UNINSTALL\$($_.UninstallKey)" -Name "NoModify" -Value 1 `
+            -DataType DWORD -x64 -ErrorAction 'SilentlyContinue'
+            $null = Set-RegValue -Root LocalMachine -Key "SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\UNINSTALL\$($_.UninstallKey)" -Name "NoModify" -Value 1 `
+            -DataType DWORD -ErrorAction 'SilentlyContinue'
+        }
+    }
+
+    Write-Log 'Post-Install Completed' -Footer
+}
+
+function Invoke-XmlConfiguration {
+    param($configFileName, $xmlParamLanguages, $ProductID)
+
+    Write-Log "Starting XML configuration" -Header
+    $languageTags = @()
+
+    if ($xmlParamLanguages -eq $null -or $xmlParamLanguages.Length -eq 0) {
+        Write-Log "No languages have been specified.  Setting configuration to English only."
+        $xmlParamLanguages += 'EN'
+    }
+
+    Write-Verbose "This is the language tag from the installed language of $xmlParamLanguages $(($OfficeLanguageProperties | Where-Object {$xmlParamLanguages.Contains($_.LanguageCode)}).LanguageTag)"
+
+    $languageTags += ($OfficeLanguageProperties | Where-Object {$xmlParamLanguages.Contains($_.LanguageCode)}).LanguageTag
+
+    $languagesToConfigure = @()
+
+    $languageTags | ForEach-Object {
+        $languagesToConfigure += "`t<Language ID=""$($_)""/>"
+    }
+
+    Write-Verbose "Editing the configuration.xml file to include the specified languages. $languageTags"
+    $configurationContent = Get-Content "$($EnvironmentProperties.CurrentDirectory)\Media\O365\$configFileName"
+
+    if ((Test-Path  "$($EnvironmentProperties.TempDirectory)\$configFileName")) {
+        Remove-Item "$($EnvironmentProperties.TempDirectory)\$configFileName" -Force
+    }
+
+    New-Item  "$($EnvironmentProperties.TempDirectory)\$configFileName" -ItemType File -Force | Out-Null
+
+    Write-Verbose "Contents of languagesToConfigure: $languagesToConfigure"
+
+    Write-Log "Adding the following languages to the $configFileName : $languagesToConfigure"
+    Write-Log "Adding the following product id to the $configFileName : $ProductID"
+
+    $configurationContent | ForEach-Object {
+        if ($_ -match "{{Languages}}") {
+            Write-Verbose "Matches {{Languages}}"
+            $languagesToConfigure | Out-File "$($EnvironmentProperties.TempDirectory)\$configFileName" -Append
+        }  else {
+                if ($_ -match "{{ProductID}}") {
+                    "<Product ID=`"$ProductID`">" | Out-File "$($EnvironmentProperties.TempDirectory)\$configFileName" -Append
+                } else {
+                    $_ | Out-File "$($EnvironmentProperties.TempDirectory)\$configFileName" -Append        
+                }
+            }
+        }
+    
+    Write-Log "XML configuration complete" -Footer
+}
+
+
+function Invoke-Uninstall { 
+    Write-Log 'Starting Uninstall' -Header
+	
+    $runUninstaller = $false
+    $ParamLanguages = @()
+	
+    $global:ProductToUninstall = $SoftwareProperties.DisplayName
+   
+
+    $OfficeLanguageProperties.Products | Where-Object {$_.DisplayName.Contains("$ProductToUninstall")} | ForEach-Object {
+        Write-Log $_.DisplayName
+        if ((Test-SoftwareInstalled -DisplayName $_.DisplayName -UninstallKey $_.UninstallKey -DisplayVersion 16)) {
+            $_.IsInstalled = $true   
+            $runUninstaller = $true
+        }        
+    }
+
+    $OfficeLanguageProperties | Where-Object {($_.Products).IsInstalled -eq $true} | ForEach-Object {
+        $ParamLanguages += $_.LanguageCode
+    }
+
+    Write-Verbose "Contents of ParamLanguages:  $ParamLanguages"
+
+    if ($runUninstaller) {
+
+        $officeProducts = @('communicator', 'excel', 'frontpg', 'infopath', 'lync', 'msaccess', 'mspub', 'onenote', 'onenotem', 'outlook', 'powerpnt', 'spdesign', 'visio', 'winproj', 'winword') | 
+        ForEach-Object {
+            Stop-Process -name $_ -Force -ErrorAction 'SilentlyContinue'
+        }
+
+        Invoke-XmlConfiguration "configuration_uninstall.xml" $ParamLanguages $ProductID
+
+        Write-Log "Beginning uninstallation of $ProductToUninstall"
+
+		<# This is commented out from 2002 version
+		Write-Log "Uninstalling Miscrosoft OneDrive"
+		
+		$UninstallPath = "$($EnvironmentProperties.SystemDrive)\Program Files\Microsoft OneDrive\OneDriveSetup.exe"
+		  If (-not (Test-Path "$($EnvironmentProperties.SystemDrive)\Program Files\Microsoft OneDrive\OneDriveSetup.exe"))
+					{
+                $UninstallPath = "$($EnvironmentProperties.SystemDrive)\Program Files (x86)\Microsoft OneDrive\OneDriveSetup.exe"
+                Write-Verbose "Was unable to find the Uninstall path in the $($EnvironmentProperties.SystemDrive)\Program Files"
+				}
+		$UninstallArguments = "/uninstall"
+		
+		Write-Log "Uninstall command: $UninstallPath $UninstallArguments"
+		$exitCode = (Start-Process -FilePath $UninstallPath -ArgumentList $UninstallArguments -Wait -PassThru -WindowStyle Hidden -ErrorAction 'SilentlyContinue').ExitCode 
+					Write-Log "Miscrosoft OneDrive uninstall exited with Exit Code: $exitCode"
+
+            if (-not($ScriptProperties.AcceptableExitCodes.Contains($exitCode))) {
+                Write-Log "An error occurred while uninstalling Miscrosoft OneDrive" -Error
+            }
+		Write-Log "Uninstallation of Miscrosoft OneDrive is completed"
+        #>
+        Write-Log "Uninstall command: $($SoftwareProperties.UninstallPath) $($SoftwareProperties.UninstallArguments)"
+
+        Write-Verbose "(Start-Process -FilePath $($SoftwareProperties.UninstallPath) -ArgumentList $($SoftwareProperties.UninstallArguments) -Wait -PassThru -WindowStyle Hidden).ExitCode"
+        $ScriptProperties.ExitCode = (Start-Process -FilePath $SoftwareProperties.UninstallPath -ArgumentList $SoftwareProperties.UninstallArguments -Wait -PassThru -WindowStyle Hidden).ExitCode
+		
+		Remove-Item -Path "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\Office Post Install" -Recurse -Force -ea SilentlyContinue
+    }
+        
+    Write-Log "Uninstall complete" -Footer
+}
+
+#Checks to see if the passed software is installed by checking the Uninstall registry key for the GUID and DisplayName
+function Test-SoftwareInstalled {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Alias('DisplayName')]
+        [String] $softwareDisplayName,
+
+        [Parameter(Mandatory = $true)]
+        [Alias('UninstallKey')]
+        [String] $softwareUninstallKey,
+
+        [Alias('DisplayVersion')]
+        [Int] $Version = 0
+    )
+
+    Write-Log "Checking the registry to see if $softwareDisplayName is installed."
+    $returnedDisplayName = Get-RegValue -KeyRoot 'HKLM' -Key "SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\UNINSTALL\$softwareUninstallKey" -Value 'DisplayName' -ErrorAction 'SilentlyContinue'
+
+    if ([String]::IsNullOrWhiteSpace($returnedDisplayName)) {
+        $returnedDisplayName = Get-RegValue -KeyRoot 'HKLM' -Key "SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\UNINSTALL\$softwareUninstallKey" `
+            -Value 'DisplayName' -x64 -ErrorAction 'SilentlyContinue'
+        Write-Verbose "Looking in the x64 registry."
+
+        if ([String]::IsNullOrWhiteSpace($returnedDisplayName)) {
+            Write-Log "Unable to verify if $softwareDisplayName is installed."
+            Return $false
+        }
+    }
+    
+    Write-Verbose "DisplayName reported as: $returnedDisplayName"
+
+    if ($softwareDisplayName -eq $returnedDisplayName) {
+        Write-Verbose "The software display name of $softwareDisplayName matched the returned display name of $returnedDisplayName"
+        if($Version -ne 0) {
+            $retVersion = [Version](Get-RegValue -KeyRoot 'HKLM' -Key "Software\Microsoft\Windows\CurrentVersion\Uninstall\$softwareUninstallKey" `
+                    -Value 'DisplayVersion' -ErrorAction 'SilentlyContinue')
+            if([String]::IsNullOrWhiteSpace($retVersion)) {
+                $retVersion = [Version](Get-RegValue -KeyRoot 'HKLM' -Key "Software\Microsoft\Windows\CurrentVersion\Uninstall\$softwareUninstallKey" `
+                        -Value 'DisplayVersion' -x64 -ErrorAction 'SilentlyContinue')
+                Write-Verbose "Looking in the x64 registry"
+
+                if([String]::IsNullOrWhiteSpace($retVersion)) {
+                    Write-Log "Unable to verify if $softwareDisplayName is installed."
+                    Return $false
+                }
+            }
+            if($retVersion.Major -ne $Version) {
+                Write-Log "The version $Version does not match the version of $softwareDisplayName of $($retVersion.major)"
+                Return $false
+            }
+        }
+        Write-Log "Found $softwareDisplayName installed."
+        Return $true
+    } else {
+        Write-Log "The returned DisplayName of $returnedDisplayName did not match the software DisplayName of $softwareDisplayName."
+        Write-Log "Unable to verify if $softwareDisplayName is installed."
+        Return $false
+    }
+}
+
+function Test-MuiInstalled {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Alias('DisplayName')]
+        [String] $softwareDisplayName,
+
+        [Parameter(Mandatory = $true)]
+        [Alias('UninstallKey')]
+        [String] $softwareUninstallKey
+    )
+
+    Write-Verbose "Checking the registry to see if $softwareDisplayName is installed."
+    $returnedDisplayName = Get-RegValue -KeyRoot 'HKLM' -Key "SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\UNINSTALL\$softwareUninstallKey" -Value 'DisplayName' -ErrorAction 'SilentlyContinue'
+
+    if ([String]::IsNullOrWhiteSpace($returnedDisplayName)) {
+        $returnedDisplayName = Get-RegValue -KeyRoot 'HKLM' -Key "SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\UNINSTALL\$softwareUninstallKey" `
+            -Value 'DisplayName' -x64 -ErrorAction 'SilentlyContinue'
+        Write-Verbose "Looking in the x64 registry."
+
+        if ([String]::IsNullOrWhiteSpace($returnedDisplayName)) {
+            Write-Verbose "Unable to verify if $softwareDisplayName is installed."
+            Return $false
+        }
+    }
+    
+    Write-Verbose "DisplayName reported as: $returnedDisplayName"
+
+    if ($softwareDisplayName -eq $returnedDisplayName) {
+        Write-Verbose "The software display name of $softwareDisplayName matched the returned display name of $returnedDisplayName"
+        Return $true
+    } else {
+        Write-Verbose "The returned DisplayName of $returnedDisplayName did not match the software DisplayName of $softwareDisplayName."
+        Write-Verbose "Unable to verify if $softwareDisplayName is installed."
+        Return $false
+    }
+}
+function Test-ProjectVisioInstallation{
+ Write-Log 'Checking for Project and Visio Installed versions.' -Header
+    $VisioProjectInstalled = $false
+	$OfficeSetupBitness = ""
+    
+    $ProjectVisioProperties | ForEach-Object {
+        if ((Test-SoftwareInstalled -DisplayName $_.DisplayName -UninstallKey $_.UninstallKey)) {
+            $_.IsInstalled = $true
+			$VisioProjectInstalled = $true
+        }
+    }
+
+    if ($VisioProjectInstalled) {
+	      $ProjectVisioProperties | ForEach-Object {
+        $projectVisioVersion = $_
+        if ($projectVisioVersion.IsInstalled) {
+		     
+            Write-Log "Microsoft Office 2016 setup detected $($projectVisioVersion.DisplayName) on computer $($EnvironmentProperties.ComputerName).Installation would be exited."
+			}
+		}
+		 
+	    Write-Log "Microsoft Project/Visio should be uninstalled before installating Microsoft Office 2016"
+        $ScriptProperties.ExitCode = 1
+        Stop-Script
+	}
+	
+	else {
+	$32bitlist = Get-RegKey -Root 'HKLM' -Key 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+    $64bitlist = Get-RegKey -Root 'HKLM' -Key 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -x64
+
+    if($EnvironmentProperties.OSArchitecture -eq 'AMD64') {
+        $ProgramList = $32bitlist + $64bitlist
+    } else {
+        $ProgramList = $32bitlist
+    }
+	
+	 ForEach ($Program in $ProgramList) {
+        if($Program.StartsWith('O365')) {
+		
+           $OfficeSetupBitness = Get-RegValue -Root 'HKLM' -Key 'SOFTWARE\Microsoft\Office\15.0\Outlook' -Value 'Bitness'
+            if([string]::IsNullOrWhiteSpace($OfficeSetupBitness)) {
+            $OfficeSetupBitness = Get-RegValue -Root 'HKLM' -Key 'SOFTWARE\Microsoft\Office\15.0\Outlook' -Value 'Bitness' -x64
+                }
+        if([string]::IsNullOrWhiteSpace($OfficeSetupBitness)){
+        $OfficeSetupBitness = Get-RegValue -Root 'HKLM' -Key 'SOFTWARE\Microsoft\Office\16.0\Outlook' -Value 'Bitness'
+		}
+        if([string]::IsNullOrWhiteSpace($OfficeSetupBitness)) {
+            $OfficeSetupBitness = Get-RegValue -Root 'HKLM' -Key 'SOFTWARE\Microsoft\Office\16.0\Outlook' -Value 'Bitness' -x64
+        }         
+		 
+       }
+	}
+	
+	Write-Log "Bitness currently installed is $($OfficeSetupBitness)" 
+	
+	 ForEach ($item in $ProgramList) {
+        if(($item.StartsWith('ProjectProRetail')) -or ($item.StartsWith('VisioProRetail'))) {
+            if($OfficeSetupBitness -eq 'x86') {
+                Write-Log "Conflict found with the bitness of the current install and Office 365 64bit."
+				$ScriptProperties.ExitCode = 1
+                Stop-Script
+            }
+        }
+	}
+	
+	
+	
+	}
+	Write-Log "No Conflict found with current Project/Visio install and Office 365 32bit...Proceeding with Microsoft Office 2016 Installation"
+	
+	Write-Log "Finished checking for Project and Visio installed versions" -Footer
+}
+
+
+
+
+function Get-RegValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Alias('Root')]
+        [String] $keyRoot,
+
+        [Parameter(Mandatory = $true)]
+        [Alias('Key')]
+        [String] $keyPath,
+
+        [Alias('Value')]
+        [String] $keyValue,
+
+        [Alias('x64')]
+        [Switch] $targetRegistryArchitecture
+    )
+
+        $regArchitecture = [Microsoft.Win32.RegistryView]::Registry32
+
+        if ($targetRegistryArchitecture){
+            $regArchitecture = [Microsoft.Win32.RegistryView]::Registry64
+        }
+
+        Switch($keyRoot){
+            'HKLM'{$key = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, $regArchitecture)}
+            'HKCU'{$key = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, $regArchitecture)}
+            'HKU' {$key = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::Users, $regArchitecture)}
+            Default{$key = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, $regArchitecture)}
+        }
+        
+        $subKey =  $key.OpenSubKey("$keyPath")
+
+        $value = $null
+
+        if($subKey -ne $null) {
+            $value = $subKey.GetValue("$keyValue")
+        }
+
+        Return $value
+}
+
+function Get-RegKey {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Alias('Root')]
+        [String] $keyRoot,
+
+        [Parameter(Mandatory = $true)]
+        [Alias('Key')]
+        [String] $keyPath,
+
+        [Alias('x64')]
+        [Switch] $targetRegistryArchitecture
+    )
+
+        $regArchitecture = [Microsoft.Win32.RegistryView]::Registry32
+
+        if ($targetRegistryArchitecture){
+            $regArchitecture = [Microsoft.Win32.RegistryView]::Registry64
+        }
+
+        Switch($keyRoot){
+            'HKLM'{$key = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, $regArchitecture)}
+            'HKCU'{$key = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, $regArchitecture)}
+            'HKU' {$key = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::Users, $regArchitecture)}
+            Default{$key = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, $regArchitecture)}
+        }
+        
+        $subKey =  $key.OpenSubKey("$keyPath")
+
+        $value = $subKey.GetSubKeyNames()
+
+        Return $value
+}
+
+function Set-RegValue(){
+    param(
+        [Parameter(Mandatory = $true)]
+        [Alias('Root')]
+        [Microsoft.Win32.RegistryHive] $KeyRoot,
+
+        [Parameter(Mandatory = $true)]
+        [Alias('Key')]
+        [String] $KeyPath,
+
+        [Parameter(Mandatory = $true)]
+        [Alias('Name')]
+        [String] $KeyName,
+
+        [Parameter(Mandatory = $true)]
+        [Alias('Value')]
+        [String] $KeyValue,
+
+        [Parameter(Mandatory = $true)]
+        [Alias('DataType')]
+        [Microsoft.Win32.RegistryValueKind] $Type,
+
+        [Alias('x64')]
+        [Switch] $b64
+    )
+
+        $RegArchitecture = [Microsoft.Win32.RegistryView]::Registry32
+
+        if ($b64 -eq $true){
+            $RegArchitecture = [Microsoft.Win32.RegistryView]::Registry64
+        }
+
+        $Key = [Microsoft.Win32.RegistryKey]::OpenBaseKey($KeyRoot, $RegArchitecture)
+             
+        $subKey =  $Key.OpenSubKey($KeyPath, $true)
+        $subKey.SetValue($KeyName, $KeyValue, $Type)
+        $root = $subKey.GetValue($KeyName)
+
+        if ($root -eq $null) {
+            $root = ""
+        }
+
+        return $root
+}
+
+#Writes to the log file
+function Write-Log {
+    param(
+        [String] $message,
+        
+        [Alias('Header')]
+        [Switch] $headerTag,
+
+        [Alias('Footer')]
+        [Switch] $footerTag,        
+
+        [Alias('Error')]
+        [Switch] $errorMessage
+    )
+
+    if ($headerTag) {
+        Write-Host "$([Environment]::NewLine)$('=' * 20) $message $('=' * 20) $([Environment]::NewLine * 2)"
+    }
+
+    if ($footerTag) {
+        Write-Host "$('=' * 20) $message $('=' * 20) $([Environment]::NewLine)`r`n"
+    }
+
+    if ($errorMessage) {
+        Write-Host "$([Environment]::NewLine * 2)$(Get-Date) ERROR - $message `r`n $([Environment]::NewLine)"
+    }
+
+    if (-not($errorMessage) -and -not($headertag) -and -not($footerTag)) {
+        Write-Host "  - $(Get-Date)     $message `r`n"
+    } 
+}
+
+#Exits the script
+function Stop-Script {
+    if ($ScriptProperties.SplashScreen -ne $null -and $ScriptProperties.SplashScreen.Window.IsVisible) {
+        try { 
+            Stop-Splash -Splash $ScriptProperties.SplashScreen
+        } catch {
+            Write-Log 'Caught an error while attempting to stop the splash screen.'
+        }
+        
+        Write-Log 'Stopping splash screen.'
+    }
+
+    Write-Log "Script completed with an exit code of: $($ScriptProperties.ExitCode)"
+
+    Write-Host "$([Environment]::NewLine) $('*' * 30) Script Complete $('*' * 30)$([Environment]::NewLine)"
+    
+    #Closes the transcript file.
+    Stop-Transcript
+    Exit $ScriptProperties.ExitCode
+}
+function Start-TimerWindow {
+    $timeout = $false
+    $ScriptProperties.TimerWindow = New-TimerWindow -ApplicationName $ScriptProperties.ApplicationName -DisplayLanguage $EnvironmentProperties.PreferredDisplayLanguage
+
+    Write-Log "Waiting while the user safely closes all Microsoft Office applications or the Ten minute timer runs out."
+    
+    $i = 0
+    while (-not(($ScriptProperties.TimerWindow).ReadyToClose) -and ($i -lt 4500)) {
+        $i++
+        Start-Sleep -milliseconds 200
+
+        if ($ScriptProperties.TimerWindow.StopWatch.ElapsedMilliseconds -ge 600000){
+            $ScriptProperties.TimerWindow.StopWatch.Stop()
+            $timeout = $true
+            Write-Log "The timeout of Ten minutes has been reached.  Forcing Office applications closed."
+            Break
+        }
+    }
+
+    try {
+        if ($timeout) {
+            Write-Log "Closing the Ten minute timer window."
+        } else {
+            Write-Log "User has clicked Install Now.  Closing the Ten minute timer window."
+        }
+        
+        Stop-TimerWindow $ScriptProperties.TimerWindow
+    } catch {
+        Write-Log "Caught an error while closing the Ten minute timer window."
+    }
+}
+
+
+function Invoke-InstallOfficeThemes {
+<# This function is not used#>
+    Write-Log "Starting the John Deere Office theme installation" -Header
+
+    $ProgF = "Program Files"
+    $rootpath = "Microsoft Office\root\Document Themes 16"
+    
+    Write-Log "Copying $($EnvironmentProperties.CurrentDirectory)\Media\O365\JohnDeere_GY.thmx to $($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath"
+    Copy-Item -Path "$($EnvironmentProperties.CurrentDirectory)\Media\O365\JohnDeere_GY.thmx" `
+        -Destination "$($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\JohnDeere_GY.thmx" -Force -ErrorAction 'SilentlyContinue' | Out-Null
+    
+    if ((Test-Path "$($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\JohnDeere_GY.thmx")) {
+        Write-Log "Successfully copied the JohnDeere_GY.thmx file"
+    }
+
+    Write-Log "Copying $($EnvironmentProperties.CurrentDirectory)\Media\O365\JohnDeere_BY.thmx to $($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath"
+    Copy-Item -Path "$($EnvironmentProperties.CurrentDirectory)\Media\O365\JohnDeere_BY.thmx" `
+        -Destination "$($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\JohnDeere_BY.thmx" -Force -ErrorAction 'SilentlyContinue' | Out-Null
+    
+    if ((Test-Path "$($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\JohnDeere_BY.thmx")) {
+        Write-Log "Successfully copied the JohnDeere_BY.thmx file"   
+    }
+
+    Write-Log "Copying $($EnvironmentProperties.CurrentDirectory)\Media\O365\John Deere.xml to $($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\Theme Colors"
+    Copy-Item -Path "$($EnvironmentProperties.CurrentDirectory)\Media\O365\John Deere.xml" `
+        -Destination "$($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\Theme Colors\John Deere.xml" -Force -ErrorAction 'SilentlyContinue' | Out-Null
+    
+    if ((Test-Path "$($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\Theme Colors\John Deere.xml")) {
+        Write-Log "Successfully copied the John Deere.xml file"   
+    }
+
+    Write-Log "Copying $($EnvironmentProperties.CurrentDirectory)\Media\O365\John Deere BY.xml to $($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\Theme Colors"
+    Copy-Item -Path "$($EnvironmentProperties.CurrentDirectory)\Media\O365\John Deere BY.xml" `
+        -Destination "$($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\Theme Colors\John Deere BY.xml" -Force -ErrorAction 'SilentlyContinue' | Out-Null
+    
+    if ((Test-Path "$($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\Theme Colors\John Deere BY.xml")) {
+        Write-Log "Successfully copied the John Deere BY.xml file"   
+    }
+
+    Write-Log "Copying $($EnvironmentProperties.CurrentDirectory)\Media\O365\John Deere GY.xml to $($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\Theme Colors"
+    Copy-Item -Path "$($EnvironmentProperties.CurrentDirectory)\Media\O365\John Deere GY.xml" `
+        -Destination "$($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\Theme Colors\John Deere GY.xml" -Force -ErrorAction 'SilentlyContinue' | Out-Null
+    
+    if ((Test-Path "$($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\Theme Colors\John Deere GY.xml")) {
+        Write-Log "Successfully copied the John Deere GY.xml file"   
+    }
+
+    Write-Log "Copying $($EnvironmentProperties.CurrentDirectory)\Media\O365\John Deere Gray.xml to $($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\Theme Colors"
+    Copy-Item -Path "$($EnvironmentProperties.CurrentDirectory)\Media\O365\John Deere Gray.xml" `
+        -Destination "$($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\Theme Colors\John Deere Gray.xml" -Force -ErrorAction 'SilentlyContinue' | Out-Null
+    
+    if ((Test-Path "$($EnvironmentProperties.SystemDrive)\$ProgF\$rootpath\Theme Colors\John Deere Gray.xml")) {
+        Write-Log "Successfully copied the John Deere Gray.xml file"   
+    }
+	
+	Copy-Item -Path "$($EnvironmentProperties.CurrentDirectory)\Media\O365\Normal.dotm" `
+        -Destination "$($EnvironmentProperties.SystemDrive)\ProgramData\Normal.dotm" -Force -ErrorAction 'SilentlyContinue' | Out-Null
+    Copy-Item -Path "$($EnvironmentProperties.CurrentDirectory)\Media\O365\NormalEmail.dotm" `
+        -Destination "$($EnvironmentProperties.SystemDrive)\ProgramData\NormalEmail.dotm" -Force -ErrorAction 'SilentlyContinue' | Out-Null
+    Copy-Item -Path "$($EnvironmentProperties.CurrentDirectory)\Media\O365\Book.xltx" `
+        -Destination "$($EnvironmentProperties.SystemDrive)\ProgramData\Book.xltx" -Force -ErrorAction 'SilentlyContinue' | Out-Null
+	Copy-Item -Path "$($EnvironmentProperties.CurrentDirectory)\Media\O365\File_Copy.vbs" `
+        -Destination "$($EnvironmentProperties.SystemDrive)\ProgramData\File_Copy.vbs" -Force -ErrorAction 'SilentlyContinue' | Out-Null
+    
+	#Set-RegValue -Root LocalMachine -Key "SOFTWARE\Microsoft\Active Setup\Installed Components\Office Post Install" -Name "Stubpath" -Value "$($EnvironmentProperties.SystemDrive)\ProgramData\File_Copy.vbs" -DataType String -ErrorAction 'SilentlyContinue'
+    #Set-RegValue -Root LocalMachine -Key "SOFTWARE\Microsoft\Active Setup\Installed Components\Office Post Install" -Name "Version" -Value "1,0" -DataType String -ErrorAction 'SilentlyContinue'
+    #Set-RegValue -Root LocalMachine -Key "SOFTWARE\Microsoft\Active Setup\Installed Components\Office Post Install" -Name "Office Post Install" -Value $Rad_Installed_Data_Path -DataType String -ErrorAction 'SilentlyContinue'
+	New-Item -Path "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\Office Post Install"
+	New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\Office Post Install" -Name "Stubpath" -Value "$($EnvironmentProperties.SystemDrive)\ProgramData\File_Copy.vbs" -PropertyType String -Force -ea SilentlyContinue
+	New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\Office Post Install" -Name "Version" -Value "1,0" -PropertyType String -Force -ea SilentlyContinue
+
+
+    Write-Log "Finished installing the John Deere Office theme" -Footer
+}
+
+#Starts the main entry point for the script
+Start-Main
