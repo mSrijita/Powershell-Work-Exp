@@ -1,0 +1,127 @@
+#===============================================================================
+#	Application:    Fork
+#	Version:        1.59.0
+#	Author:         Srijita Mondal
+#	Date:           04/09/2021
+#	Comments:       Wrap Template for Basic Wrap
+#===============================================================================
+[CmdletBinding()]
+param(
+    [Alias("U","Uninstall")]
+    [switch]$bUninstall = $false
+)
+
+#$GUID = "3309-7404-0599-8908"
+$CURDIR = ($MyInvocation.MyCommand.Definition | Split-Path -Parent) + "\" # Handle to current director
+#$APP_EXE =+"Media\ForkInstaller.exe"
+#$UNINST_EXE="$Env:Systemdrive\Program Files\yWorks\yEd\uninstall.exe"
+#$UninstallUI= "/s"
+$DOC = "Install.rtf"
+#$Doc1 = "Uninstall.rtf"
+$lRet = 0
+#===============================================================================
+#---- UNINSTALL SECTION --------------------------------------------------------
+#===============================================================================
+    
+    if ($bUninstall)
+{
+    $BIOS_Ver = Get-WmiObject -Class Win32_BIOS | select-object -ExpandProperty SMBIOSBIOSVersion
+
+    if($BIOS_Ver.Contains("amazon")){
+        
+        
+        Set-Location "D:"
+        $user_dir = Get-ChildItem "D:\Users"
+    
+        foreach($dir in $user_dir){
+            if(test-path -Path "D:\Users\$dir\Appdata\Local\Fork\app-1.59.0\Fork.exe"){
+                Remove-Item -Path "D:\Users\$dir\Appdata\Local\Fork" -Recurse -Force -ErrorAction SilentlyContinue
+            }
+    }
+        
+        if (!(test-path -Path "D:\Users\$dir\Appdata\Local\Fork\app-1.59.0\Fork.exe")){$lRet = 0}
+
+        Set-Location "$env:SystemDrive"
+    }
+    else{
+        
+                
+        $user_dir = Get-ChildItem "$env:SystemDrive\Users" | Select-Object -ExpandProperty Name
+
+        foreach($dir in $user_dir){
+            if(test-path -Path "$env:SystemDrive\Users\$dir\Appdata\Local\Fork\app-1.59.0\Fork.exe"){
+                Remove-Item -Path "$env:SystemDrive\Users\$dir\Appdata\Local\Fork" -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        if (!(test-path -Path "$env:SystemDrive\Users\$dir\Appdata\Local\Fork\app-1.59.0\Fork.exe")){$lRet = 0}
+    }
+
+    if ($lRet -eq 0){
+        Remove-Item "C:\Users\Public\Desktop\Fork.lnk" -Force -ErrorAction SilentlyContinue
+        Remove-Item "$env:SystemDrive\ProgramData\Microsoft\Windows\Start Menu\Programs\Fork" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item "C:\ProgramData\Fork" -Recurse -Force -ErrorAction SilentlyContinue
+
+    }
+}
+    
+else
+{
+    #===============================================================================
+	#---- INSTALL SECTION ----------------------------------------------------------
+	#===============================================================================
+    
+    #Check if AWS WorkSpace or Non-AWS Workspace
+
+    $BIOS_Ver = Get-WmiObject -Class Win32_BIOS | select-object -ExpandProperty SMBIOSBIOSVersion
+
+    if($BIOS_Ver.Contains("amazon")){
+        
+        
+        Set-Location "D:"
+        $user_dir = Get-ChildItem "D:\Users"
+    
+        foreach($dir in $user_dir){
+            if(!(test-path -Path "D:\Users\$dir\Appdata\Local\Fork\app-1.59.0\Fork.exe")){
+                Copy-Item ($CURDIR + "Media\Fork") -Destination "D:\Users\$dir\Appdata\Local\" -Recurse -Force -ErrorAction SilentlyContinue
+            
+            }
+    }
+        
+        if (test-path -Path "D:\Users\$dir\Appdata\Local\Fork\app-1.59.0\Fork.exe"){$lRet = 0}
+
+        Set-Location "$env:SystemDrive"
+    }
+    else{
+        
+                
+        $user_dir = Get-ChildItem "$env:SystemDrive\Users" | Select-Object -ExpandProperty Name
+
+        foreach($dir in $user_dir){
+            if(!(test-path -Path "$env:SystemDrive\Users\$dir\Appdata\Local\Fork\app-1.59.0\Fork.exe")){
+                Copy-Item ($CURDIR + "Media\Fork") -Destination "$env:SystemDrive\Users\$dir\Appdata\Local\" -Recurse -Force -ErrorAction SilentlyContinue
+            
+            }
+        }
+
+        if (test-path -Path "$env:SystemDrive\Users\$dir\Appdata\Local\Fork\app-1.59.0\Fork.exe"){$lRet = 0}
+    }
+
+    # Creating Shortcut
+    
+    if ($lRet -eq 0){
+        Copy-Item -Path ($CURDIR + "Media\Fork.lnk") -Destination "C:\Users\Public\Desktop" -Force -ErrorAction SilentlyContinue
+        New-Item "$env:SystemDrive\ProgramData\Microsoft\Windows\Start Menu\Programs\Fork" -ItemType directory -Force -ErrorAction SilentlyContinue
+        Copy-Item -Path ($CURDIR + "Media\Fork.lnk") -Destination "$env:SystemDrive\ProgramData\Microsoft\Windows\Start Menu\Programs\Fork" -Force -ErrorAction SilentlyContinue
+    }
+
+    #for the license
+    
+    New-Item "C:\ProgramData\Fork" -itemtype directory
+    Copy-Item -Path ($CURDIR + "Media\NTczNzIz.spadl") -Destination "C:\ProgramData\Fork" -Force -ErrorAction SilentlyContinue
+}
+
+if ($lRet -eq 3010) { $lRet = 0 } # Reboot required
+if ($lRet -eq 0 -and $LASTEXITCODE -ne 0) { $lRet = $LASTEXITCODE }
+
+exit $lRet
