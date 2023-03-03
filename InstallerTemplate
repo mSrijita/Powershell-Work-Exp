@@ -1,8 +1,3 @@
-#==========================================================================
-# AUTHOR: , Deere & Company
-# DATE: 
-# Version: 1.1.0
-#==========================================================================
 
 #Enables the powershell common parameters and sets defaults http://technet.microsoft.com/en-us/library/hh847872.aspx
 [CmdletBinding()]
