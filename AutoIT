@@ -1,0 +1,396 @@
+#Region ;**** Directives created by AutoIt3Wrapper_GUI ****
+#AutoIt3Wrapper_Res_Language=1033
+#AutoIt3Wrapper_Res_requestedExecutionLevel=requireAdministrator
+#AutoIt3Wrapper_Add_Constants=n
+#EndRegion ;**** Directives created by AutoIt3Wrapper_GUI ****
+; *** Start added by AutoIt3Wrapper ***
+#include <ButtonConstants.au3>
+#include <WindowsConstants.au3>
+; *** End added by AutoIt3Wrapper ***
+; *** Start added by AutoIt3Wrapper ***
+#include <FileConstants.au3>
+; *** End added by AutoIt3Wrapper ***
+#cs ----------------------------------------------------------------------------
+
+	AutoIt Version: 3.3.8.1
+	Author:         Nancy
+
+	Script Usage:
+	Template AutoIt script for 3M Packages.
+
+#ce ----------------------------------------------------------------------------
+
+; Script Start - Add your code below here
+#include <file.au3>
+Global $iExitCode
+Global $LoggedOnUser
+Global $OpenMobile
+Global $OSArchType
+Global $RegKeyDisplayName
+Global $Regcheck
+Global $checkKey
+Global $FileExists
+
+;Application Variables - MANDATE to Fill
+Global $AppName = "Genesis"
+Global $AppVer = "6.99"
+Global $ATNum = "AT01218"
+
+
+;Confirm Install Variables - MANDATE for all packages to confirm the installation is successful
+Global $MSIName = @ScriptDir & "\JRE\jre1.5.0_22.msi"
+Global $MSTName = @Scriptdir & "\JRE\jre1.5.0_22.mst"
+Global $LogFilePath = "C:\Srccode\Apps\" & $AppName & "_" & $AppVer & "_" & $ATNum & "\JREInstall.log"
+Global $UninstallRegKeyGUID = "{67F3F46D-AAF3-4181-B37C-DA2DF076461B}"
+Global $JREKey = "{3248F0A8-6813-11D6-A77B-00B0D0150220}"
+Global $JREName = "J2SE Runtime Environment 5.0 Update 22"
+Global $DisplayName = "Genesis"
+Global $LogFile = ("C:\Srccode\Apps\" & $AppName & "_" & $AppVer & "_" & $ATNum & "\Install.log")
+
+AutoItSetOption("TrayIconHide", 1)
+If Not (@OSVersion = "WIN_XP") Then
+	RunWait(@ComSpec & " /c " & 'sc stop PcaSvc', "", @SW_HIDE)
+	Sleep(5000)
+EndIf
+
+#Cs ################################################# MAIN sections ##############################################
+* Remove all unwanted fucntions from MAIN section
+* Always use ConfirmAppInstalled() to verify the installation is succeeded
+* Cal-Out respective sub functions as designed whenever its required.
+#ce
+
+
+Startlogging()
+PreInstall()
+JREInstall()
+Install()
+PostInstall()
+ConfirmAppInstalled()
+WriteExitCodeRegKey()
+;PromptReboot()
+Endlogging()
+OnAutoItExitRegister("startPcaSvc")
+Exit ($iExitCode)
+
+
+
+#Cs ################################################# SUB FUNCTION Sections ##############################################
+* Modify the functions as in required, based on your specifc packaging requirement
+* DO NOT Change the default functions like Startlogging(), ExitProcess() etc..,
+#ce
+
+
+Func Startlogging()
+
+	If Not (FileExists("C:\Srccode\Apps\" & $AppName & "_" & $AppVer & "_" & $ATNum & "\")) Then DirCreate("C:\Srccode\Apps\" & $AppName & "_" & $AppVer & "_" & $ATNum & "\")
+	_FileWriteLog($LogFile, "********************************************************************************************************************************************************************")
+	_FileWriteLog($LogFile, "Genesis 6.99")
+	_FileWriteLog($LogFile, "Date Created/Executed:  " & @MON & "-" & @MDAY & "-" & @YEAR)
+	_FileWriteLog($LogFile, "********************************************************************************************************************************************************************")
+	_FileWriteLog($LogFile, "Computer_Name:     " & @ComputerName)
+	_FileWriteLog($LogFile, "User_Name:             " & @UserName)
+	_FileWriteLog($LogFile, "Logon_Domain:       " & @LogonDomain)
+	_FileWriteLog($LogFile, "OS_Version:            " & @OSVersion)
+	_FileWriteLog($LogFile, "OS_Service Pack:  " & @OSServicePack)
+	_FileWriteLog($LogFile, "OS_Architecture:     " & @OSArch)
+	_FileWriteLog($LogFile, "********************************************************************************************************************************************************************")
+	_FileWriteLog($LogFile, "")
+EndFunc   ;==>Startlogging
+
+
+Func PreInstall()
+
+If @OSArch="X86" Then
+		$OSArchType="X86"
+	EndIf
+
+	If $OSArchType="X86" Then
+		$RegKeyDisplayName=RegRead("HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" & $UninstallRegKeyGUID, "DisplayName")
+	Else
+		$RegKeyDisplayName=RegRead("HKLM64\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\" & $UninstallRegKeyGUID, "DisplayName")
+		If ($RegKeyDisplayName="") Then
+			$RegKeyDisplayName=RegRead("HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" & $UninstallRegKeyGUID, "DisplayName")
+		EndIf
+	EndIf
+
+
+	If $RegKeyDisplayName=$DisplayName Then
+		$iExitCode="0"
+		_FileWriteLog($LogFile, "SUCCESS:  Application is already installed. Installation aborted.! ")
+		_FileWriteLog($LogFile, "SUCCESS:  Exit Code:  " & $iExitCode)
+		ExitProcess()
+	EndIf
+
+    _FileWriteLog($LogFile, "Running Cyclic Active Setup Checks")
+	If $OSArchType="X86" Then
+		ShellExecuteWait("" & Chr(34) & @ScriptDir & "\VBS\CU_Ix86.vbs" & Chr(34) & "", "", "", "", @SW_SHOW)
+		FileDelete("C:\ProgramData\EnvDelx86.vbs")
+
+	Else
+	    FileDelete("C:\ProgramData\EnvDel.vbs")
+		ShellExecuteWait("" & Chr(34) & @ScriptDir & "\VBS\CU_Ix64.vbs" & Chr(34) & "", "", "", "", @SW_SHOW)
+	EndIf
+
+   $iExitCode = ShellExecuteWait("" & Chr(34) & @ScriptDir & "\VBS\ASRemove.vbs" & Chr(34) & "", "", "", "", @SW_SHOW)
+		If ($iExitCode = "0") Or ($iExitCode = "3010") Then
+		$iExitCode = "0"
+		Else
+		_FileWriteLog($LogFile, "Cyclic Active Setup Failed")
+		ExitProcess()
+       EndIf
+EndFunc
+
+Func JREInstall()
+	_FileWriteLog($LogFile, "Started JRE installation.")
+
+		If @OSArch="X86" Then
+		$OSArchType="X86"
+	EndIf
+
+If $OSArchType="X86" Then
+		$JRE=RegRead("HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" & $JREKey, "DisplayName")
+	Else
+		$JRE=RegRead("HKLM64\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\" & $JREKey, "DisplayName")
+		If ($JRE="") Then
+			$JRE=RegRead("HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" & $JREKey, "DisplayName")
+		EndIf
+	EndIf
+
+  If $JRE=$JREName Then
+		_FileWriteLog($LogFile, "JRE is already installed.")
+  Else
+
+	$iExitCode = RunWait(@ComSpec & " /c " & 'msiexec /L*v "' & $LogFilePath & '" /i "' & $MSIName & '" TRANSFORMS="' & $MSTName & '" /qn /norestart', @ScriptDir,"",@SW_HIDE)
+   ; $iExitCode = RunWait(@ComSpec & " /c " & Chr(34) & @ScriptDir & "\JRE\JRE5u22.bat" & Chr(34), @ScriptDir,"",@SW_HIDE)
+
+	If @OSArch = "X86" Then
+		RegWrite("HKLM\SOFTWARE\JavaSoft\Java Update\Policy","EnableJavaUpdate","REG_DWORD","0")
+	Else
+		RegWrite("HKLM64\SOFTWARE\Wow6432Node\JavaSoft\Java Update\Policy","EnableJavaUpdate","REG_DWORD","0")
+	EndIf
+
+		If ($iExitCode = "0") Or ($iExitCode = "3010") Then
+		$iExitCode = "0"
+		_FileWriteLog($LogFile, "SUCCESS:  Installation of JRE is completed.")
+		_FileWriteLog($LogFile, "Disabled Java update....")
+	Else
+		_FileWriteLog($LogFile, "ERROR:  JRE setup failed")
+		_FileWriteLog($LogFile, "ERROR:  Installation of " & $AppName & " " & $AppVer & " is FAILED.")
+		_FileWriteLog($LogFile, "ERROR:  Exit Code:  " & $iExitCode)
+		ExitProcess()
+	EndIf
+
+	EndIf
+
+EndFunc
+
+Func Install()
+
+
+    _FileWriteLog($LogFile, "Started Installation of " & $AppName & " " & $AppVer & "..!")
+
+	If @OSArch="X86" Then
+		$OSArchType="X86"
+	EndIf
+
+If $OSArchType="X86" Then
+
+    $iExitCode = RunWait(@ComSpec & " /c " & Chr(34) & @ScriptDir & "\Genesis_x86.bat" & Chr(34), @ScriptDir,"",@SW_HIDE)
+
+	If ($iExitCode = "0") Or ($iExitCode = "3010") Then
+		$iExitCode = "0"
+		_FileWriteLog($LogFile, "SUCCESS:  Installation of " & $AppName & " " & $AppVer & " is completed.")
+        _FileWriteLog($LogFile, "SUCCESS:  Exit Code:  " & $iExitCode)
+	Else
+		_FileWriteLog($LogFile, "ERROR:  Installation of " & $AppName & " " & $AppVer & " is FAILED.")
+		_FileWriteLog($LogFile, "ERROR:  Exit Code:  " & $iExitCode)
+		ExitProcess()
+	 EndIf
+Else
+
+     $iExitCode = RunWait(@ComSpec & " /c " & Chr(34) & @ScriptDir & "\Genesis_x64.bat" & Chr(34), @ScriptDir,"",@SW_HIDE)
+
+	If ($iExitCode = "0") Or ($iExitCode = "3010") Then
+		$iExitCode = "0"
+		_FileWriteLog($LogFile, "SUCCESS:  Installation of " & $AppName & " " & $AppVer & " is completed.")
+        _FileWriteLog($LogFile, "SUCCESS:  Exit Code:  " & $iExitCode)
+	Else
+		_FileWriteLog($LogFile, "ERROR:  Installation of " & $AppName & " " & $AppVer & " is FAILED.")
+		_FileWriteLog($LogFile, "ERROR:  Exit Code:  " & $iExitCode)
+		ExitProcess()
+	EndIf
+
+EndIf
+
+EndFunc
+
+Func PostInstall()
+
+
+		_FileWriteLog($LogFile, "Deleting Desktop shortcuts.")
+         FileDelete ("C:\Users\Public\Desktop\Genesis.lnk")
+
+		If FileExists("C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Ghostscript\Uninstall Ghostscript 9.10.LNK") Then
+	       FileDelete("C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Ghostscript\Uninstall Ghostscript 9.10.LNK")
+		  _FileWriteLog($LogFile, "Deleted Uninstall shortcut.")
+		EndIf
+
+
+		If FileExists("C:\Program Files\gs\gs9.10\uninstgs.exe") Then
+		   FileDelete("C:\Program Files\gs\gs9.10\uninstgs.exe")
+		   _FileWriteLog($LogFile, "Deleted Uninstall File.")
+		EndIf
+
+		If FileExists("C:\Program Files (x86)\gs\gs9.10\uninstgs.exe") Then
+		   FileDelete("C:\Program Files (x86)\gs\gs9.10\uninstgs.exe")
+		   _FileWriteLog($LogFile, "Deleted Uninstall File.")
+		EndIf
+
+		_FileWriteLog($LogFile, "Active Setup Configuration Initiated.")
+
+
+	If @OSArch = "X86" Then
+		FileCopy( @ScriptDir & "\VBS\GenEnvx86.vbs", "C:\ProgramData",1)
+		RegWrite("HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\Genesis6.99","StubPath","REG_SZ","C:\ProgramData\GenEnvx86.vbs")
+		RegWrite("HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\Genesis6.99","Version","REG_SZ","1,0")
+		RegWrite("HKCU\SOFTWARE\Microsoft\Active Setup\Installed Components\Genesis6.99", "Version", "REG_SZ", "1,0")
+		_FileWriteLog($LogFile, "Active Setup Regkey is added....")
+	Else
+		FileCopy( @ScriptDir & "\VBS\GenEnv.vbs", "C:\ProgramData",1)
+		RegWrite("HKLM64\SOFTWARE\Wow6432Node\Microsoft\Active Setup\Installed Components\Genesis6.99","StubPath","REG_SZ","C:\ProgramData\GenEnv.vbs")
+		RegWrite("HKLM64\SOFTWARE\Wow6432Node\Microsoft\Active Setup\Installed Components\Genesis6.99","Version","REG_SZ","1,0")
+		RegWrite("HKCU\SOFTWARE\Wow6432Node\Microsoft\Active Setup\Installed Components\Genesis6.99", "Version", "REG_SZ", "1,0")
+		_FileWriteLog($LogFile, "Active Setup Regkey is added....")
+	EndIf
+
+
+
+	_FileWriteLog($LogFile, "Copying Ora files.")
+	$iExitCode = ShellExecuteWait("" & Chr(34) & @ScriptDir & "\FileCopy.vbs" & Chr(34) & "", "", "", "", @SW_SHOW)
+
+	If ($iExitCode = "0") Or ($iExitCode = "3010") Then
+		$iExitCode = "0"
+		_FileWriteLog($LogFile, "Ora File Copy Success.")
+	Else
+		_FileWriteLog($LogFile, "ERROR:  Ora File Copy FAILED.")
+		_FileWriteLog($LogFile, "ERROR:  Exit Code:  " & $iExitCode)
+		ExitProcess()
+	EndIf
+
+EndFunc
+
+Func ConfirmAppInstalled()
+
+	_FileWriteLog($LogFile, "*** Verifying ARP Entries to confirm whether package is successfull installed.! ***")
+
+	If @OSArch="X86" Then
+		$OSArchType="X86"
+	EndIf
+
+	If $OSArchType="X86" Then
+		$RegKeyDisplayName=RegRead("HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" & $UninstallRegKeyGUID, "DisplayName")
+	Else
+		$RegKeyDisplayName=RegRead("HKLM64\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\" & $UninstallRegKeyGUID, "DisplayName")
+		If ($RegKeyDisplayName="") Then
+			$RegKeyDisplayName=RegRead("HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" & $UninstallRegKeyGUID, "DisplayName")
+		EndIf
+	EndIf
+
+	If $RegKeyDisplayName<>$DisplayName Then
+		$iExitCode="1"
+		_FileWriteLog($LogFile, "ERROR:  Verification of ARP is Failed, Application Installation is Failed.! ")
+		_FileWriteLog($LogFile, "ERROR:  Exit Code:  " & $iExitCode)
+	EndIf
+
+	If $RegKeyDisplayName=$DisplayName Then
+		$iExitCode="0"
+		_FileWriteLog($LogFile, "SUCCESS:  Verification of ARP is Success, Application Installation is Success.! ")
+		_FileWriteLog($LogFile, "SUCCESS:  Exit Code:  " & $iExitCode)
+	EndIf
+
+EndFunc
+
+Func WriteExitCodeRegKey()
+
+	If @OSArch = "X86" Then
+		RegWrite("HKLM\SOFTWARE\SDInstalls\" & $AppName & "_" & $AppVer & "_" & $ATNum, "Install Date", "REG_SZ", @MON & "-" & @MDAY & "-" & @YEAR)
+		RegWrite("HKLM\SOFTWARE\SDInstalls\" & $AppName & "_" & $AppVer & "_" & $ATNum, "User Name", "REG_SZ", @UserName)
+		RegWrite("HKLM\SOFTWARE\SDInstalls\" & $AppName & "_" & $AppVer & "_" & $ATNum, "ExitCode", "REG_SZ", $iExitCode)
+	ElseIf @OSArch = "X64" Then
+		RegWrite("HKLM64\SOFTWARE\Wow6432Node\SDInstalls\" & $AppName & "_" & $AppVer & "_" & $ATNum, "Install Date", "REG_SZ", @MON & "-" & @MDAY & "-" & @YEAR)
+		RegWrite("HKLM64\SOFTWARE\Wow6432Node\SDInstalls\" & $AppName & "_" & $AppVer & "_" & $ATNum, "User Name", "REG_SZ", @UserName)
+		RegWrite("HKLM64\SOFTWARE\Wow6432Node\SDInstalls\" & $AppName & "_" & $AppVer & "_" & $ATNum, "ExitCode", "REG_SZ", $iExitCode)
+		RegWrite("HKLM64\SOFTWARE\SDInstalls\" & $AppName & "_" & $AppVer & "_" & $ATNum, "Install Date", "REG_SZ", @MON & "-" & @MDAY & "-" & @YEAR)
+		RegWrite("HKLM64\SOFTWARE\SDInstalls\" & $AppName & "_" & $AppVer & "_" & $ATNum, "User Name", "REG_SZ", @UserName)
+		RegWrite("HKLM64\SOFTWARE\SDInstalls\" & $AppName & "_" & $AppVer & "_" & $ATNum, "ExitCode", "REG_SZ", $iExitCode)
+	EndIf
+
+EndFunc   ;==>WriteExitCodeRegKey
+
+Func PromptReboot()
+   If ($iExitCode = "0")  Then
+	Global $tdiff, $bMsg, $Button_Reboot, $tinit, $COLOR_RED,$COLOR_GREEN
+	GUICreate("Genesis 6.99 Install", 700, 270, -1, -1, BitOR($WS_CAPTION, $WS_POPUP), $WS_EX_TOPMOST) ; will create a dialog box that when displayed is centered
+	GUISetState(@SW_SHOW)
+	GUISetFont(11.5, "", "")
+	Local $clrtemp = GUICtrlCreateLabel("A Mandatory Reboot is required to complete the Genesis 6.99 Installation." & @CRLF & @CRLF & "Close all active applications, and click on 'Reboot Now'" & @CRLF & @CRLF & "If No Action taken to this prompt, Your Device will reboot automatically after 4 hours.!!", 25, 30, 650, 150)
+	GUICtrlSetColor($clrtemp, $COLOR_RED)
+	GUICtrlSetFont($clrtemp, 13, 500, 0)
+	$Button_Reboot = GUICtrlCreateButton("Reboot Now", 290, 200, 120, 35)
+	GUICtrlSetColor($Button_Reboot, $COLOR_GREEN)
+	$tinit = TimerInit()
+
+	;While $tdiff < 120000
+	While $tdiff < 14400000
+
+		$tdiff = TimerDiff($tinit)
+
+		$bMsg = GUIGetMsg()
+
+		Select
+			Case $bMsg = $Button_Reboot
+				_FileWriteLog($LogFile, "User clicked on Reboot, Machine will Reboot now")
+				run(@ComSpec & " /c shutdown /r /t 10 /f")
+				Endlogging()
+				;Shutdown(6)
+				Exit(0)
+		EndSelect
+
+		If($tdiff >= 14400000) And(($bMsg = "0") Or($bMsg = "")) Then
+			_FileWriteLog($LogFile, "User did not respond for 4 hours to prompt, Reboot Prompt closed, Machine will restart automatically")
+			run(@ComSpec & " /c shutdown /r /t 10 /f")
+			Endlogging()
+			;Shutdown(6)
+			Exit(0)
+		EndIf
+	WEnd
+	GUIDelete()
+	Exit(0)
+EndIf
+EndFunc
+
+
+Func ExitProcess()
+	WriteExitCodeRegKey()
+	Endlogging()
+	OnAutoItExitRegister("startPcaSvc")
+	Exit ($iExitCode)
+EndFunc
+
+
+Func Endlogging()
+
+	_FileWriteLog($LogFile, "")
+	_FileWriteLog($LogFile, "*************************************************** END OF LOGGING *****************************************************************************************************")
+
+EndFunc   ;==>Endlogging
+
+
+
+Func startPcaSvc()
+
+	If Not (@OSVersion = "WIN_XP") Then
+		Run(@ComSpec & " /c " & 'sc start PcaSvc', "", @SW_HIDE)
+	EndIf
+
+EndFunc   ;==>startPcaSvc
